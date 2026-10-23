@@ -1,6 +1,7 @@
 """CIFAR-10 datasets and loaders."""
 from __future__ import annotations
 
+import torch
 from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 
@@ -53,7 +54,7 @@ def make_loaders(
             raise ValueError("test_limit must be positive or None")
         test_data = Subset(test_data, range(min(test_limit, len(test_data))))
 
-    generator = __import__("torch").Generator().manual_seed(seed)
+    generator = torch.Generator().manual_seed(seed)
     train_loader = DataLoader(
         train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers,
         pin_memory=False, generator=generator,
