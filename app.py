@@ -12,7 +12,7 @@ from torch import nn
 
 from neural_lab.data import make_loaders
 from neural_lab.model import CIFAR10_CLASSES, CIFAR10_MEAN, CIFAR10_STD, CifarCNN, available_device, save_checkpoint
-from neural_lab.training import run_epoch, seed_everything, train_model
+from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, train_model
 
 st.set_page_config(page_title="Neural Lab", page_icon="🧠", layout="wide")
 st.markdown("""
@@ -187,7 +187,7 @@ with tab_evaluate:
             try:
                 with st.spinner("Evaluating…"):
                     _, test_loader = get_loaders(batch_size, train_limit, test_limit, augment, int(seed))
-                    st.session_state.last_eval = run_epoch(st.session_state.model, test_loader, nn.CrossEntropyLoss(), device)
+                    st.session_state.last_eval = evaluate_classifier(st.session_state.model.to(device), test_loader, device, num_classes=len(CIFAR10_CLASSES))
             except Exception as exc:
                 st.error(f"Evaluation failed: {exc}")
         metrics = st.session_state.last_eval
@@ -197,6 +197,28 @@ with tab_evaluate:
             b.metric("Test loss", f"{metrics['loss']:.3f}")
             c.metric("Images evaluated", f"{int(metrics['examples']):,}")
             st.caption("Performance is an estimate on the selected test subset, not a guarantee on arbitrary photos.")
+            matrix = np.asarray(metrics["confusion_matrix"], dtype=np.int64)
+            fig, ax = plt.subplots(figsize=(8, 6))
+            image_plot = ax.imshow(matrix, interpolation="nearest", cmap="Blues")
+            ax.set(title="Confusion matrix", xlabel="Predicted class", ylabel="True class",
+                   xticks=range(len(CIFAR10_CLASSES)), yticks=range(len(CIFAR10_CLASSES)))
+            ax.set_xticklabels(CIFAR10_CLASSES, rotation=45, ha="right")
+            ax.set_yticklabels(CIFAR10_CLASSES)
+            fig.colorbar(image_plot, ax=ax, fraction=0.046, pad=0.04)
+            threshold = matrix.max() / 2 if matrix.size else 0
+            for row in range(matrix.shape[0]):
+                for col in range(matrix.shape[1]):
+                    ax.text(col, row, str(matrix[row, col]), ha="center", va="center",
+                            color="white" if matrix[row, col] > threshold else "black", fontsize=8)
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
+            class_rows = []
+            for row in metrics["per_class"]:
+                class_rows.append({"Class": CIFAR10_CLASSES[row["class_index"]],
+                                   "Accuracy": row["accuracy"], "Support": row["support"]})
+            st.subheader("Per-class accuracy")
+            st.dataframe(class_rows, use_container_width=True, hide_index=True)
 
     st.divider()
     st.subheader("Load checkpoint")
