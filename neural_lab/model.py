@@ -115,6 +115,7 @@ def save_checkpoint(
     accuracy: float | None = None,
     optimizer: torch.optim.Optimizer | None = None,
     history: list[dict[str, float]] | None = None,
+    run_config: dict[str, Any] | None = None,
 ) -> Path:
     """Save weights plus small, explicit metadata."""
     target = Path(path)
@@ -127,6 +128,7 @@ def save_checkpoint(
         "accuracy": accuracy,
         "architecture": "CifarCNN",
         "history": history or [],
+        "run_config": run_config or {},
         "optimizer_state_dict": _cpu_tree(optimizer.state_dict()) if optimizer is not None else None,
     }
     torch.save(payload, target)
