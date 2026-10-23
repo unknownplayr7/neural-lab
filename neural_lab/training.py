@@ -68,7 +68,7 @@ def run_epoch(
 def train_model(
     model: nn.Module,
     train_loader: DataLoader,
-    test_loader: DataLoader,
+    validation_loader: DataLoader,
     *,
     device: torch.device,
     epochs: int = 5,
@@ -89,18 +89,18 @@ def train_model(
         train_metrics = run_epoch(
             model, train_loader, criterion, device, optimizer=optimizer, on_batch=on_batch
         )
-        test_metrics = run_epoch(model, test_loader, criterion, device)
+        validation_metrics = run_epoch(model, validation_loader, criterion, device)
         record = {
             "epoch": float(epoch),
             "train_loss": train_metrics["loss"],
             "train_accuracy": train_metrics["accuracy"],
-            "test_loss": test_metrics["loss"],
-            "test_accuracy": test_metrics["accuracy"],
+            "val_loss": validation_metrics["loss"],
+            "val_accuracy": validation_metrics["accuracy"],
             "seconds": train_metrics["seconds"],
         }
         history.append(record)
         if on_epoch is not None:
-            on_epoch(epoch, train_metrics, test_metrics)
+            on_epoch(epoch, train_metrics, validation_metrics)
     return history
 
 
