@@ -63,3 +63,13 @@ def test_classifier_evaluation_rejects_empty_loader():
     model = nn.Sequential(nn.Flatten(), nn.Linear(3 * 8 * 8, 3))
     with pytest.raises(ValueError, match="no batches"):
         evaluate_classifier(model, loader, torch.device("cpu"), num_classes=3)
+
+
+
+def test_classifier_evaluation_collects_only_requested_mistakes():
+    model = nn.Sequential(nn.Flatten(), nn.Linear(3 * 8 * 8, 3))
+    metrics = evaluate_classifier(model, tiny_loader(), torch.device("cpu"), num_classes=3, max_misclassified=2)
+    assert len(metrics["misclassified"]) <= 2
+    for mistake in metrics["misclassified"]:
+        assert mistake["image"].shape == (3, 8, 8)
+        assert 0 <= mistake["confidence"] <= 1
