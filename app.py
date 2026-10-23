@@ -12,7 +12,7 @@ from torch import nn
 
 from neural_lab.data import dataset_stats, make_loaders
 from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint
-from neural_lab.training import evaluate_classifier, seed_everything, train_model
+from neural_lab.training import evaluate_classifier, run_epoch, seed_everything
 
 st.set_page_config(page_title="Neural Lab", page_icon="🧠", layout="wide")
 st.markdown("""
@@ -40,6 +40,12 @@ if "class_names" not in st.session_state:
     st.session_state.class_names = CIFAR10_CLASSES
 if "model_dataset" not in st.session_state:
     st.session_state.model_dataset = None
+if "optimizer" not in st.session_state:
+    st.session_state.optimizer = None
+if "current_epoch" not in st.session_state:
+    st.session_state.current_epoch = 0
+if "run_config" not in st.session_state:
+    st.session_state.run_config = None
 
 
 def device_options() -> list[str]:
@@ -124,65 +130,118 @@ with tab_train:
     st.subheader("Train a convolutional neural network")
     c1, c2, c3 = st.columns(3)
     c1.metric("Device", str(device).upper())
-    c2.metric("Training samples", f"{train_limit:,}")
+    c2.metric("Training examples / epoch", f"{train_limit:,}")
     c3.metric("Batch size", batch_size)
-    st.write("Watch training and validation metrics to spot underfitting or overfitting. The held-out test split is reserved for final evaluation.")
+    st.write("Train from random initialization. Validation examples are separate from the held-out test split.")
+    st.caption("Use **Train next epoch** to pause between epochs, or **Train remaining epochs** to run to the selected target. Saving a checkpoint preserves optimizer state and history for resuming.")
 
-    if st.button("Start training", type="primary", use_container_width=True):
+    if st.button("Start / reset run", type="primary", use_container_width=True, key="start-run"):
         seed_everything(int(seed))
-        model = CifarCNN(num_classes=100 if dataset_key == "cifar100" else 10).to(device)
-        st.session_state.model = model
-        st.session_state.model_dataset = dataset_key
-        st.session_state.history = []
-        st.session_state.last_eval = None
+        config = {
+            "dataset_name": dataset_key, "batch_size": int(batch_size),
+            "train_limit": int(train_limit), "validation_limit": int(validation_limit),
+            "test_limit": int(test_limit), "augment": bool(augment), "seed": int(seed),
+        }
         try:
             with st.spinner("Connecting to Hugging Face and preparing streaming data…"):
-                train_loader, validation_loader, _test_loader, class_names = get_loaders(dataset_key, batch_size, train_limit, validation_limit, test_limit, augment, int(seed))
+                _train_loader, _validation_loader, _test_loader, class_names = get_loaders(**config)
+            model = CifarCNN(num_classes=len(class_names)).to(device)
+            optimizer = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=1e-4)
+            st.session_state.model = model
+            st.session_state.optimizer = optimizer
             st.session_state.class_names = class_names
-            progress = st.progress(0, text="Preparing training run…")
-            live = st.empty()
-            batch_progress = st.progress(0, text="Waiting for first batch…")
-            epoch_rows: list[dict[str, float]] = []
-
-            def batch_callback(batch_index: int, batch_count: int, rolling_loss: float) -> None:
-                batch_progress.progress(batch_index / max(batch_count, 1), text=f"Batch {batch_index}/{batch_count} · running loss {rolling_loss:.3f}")
-
-            def epoch_callback(epoch: int, train_metrics: dict[str, float], validation_metrics: dict[str, float]) -> None:
-                record = {
-                    "epoch": float(epoch), "train_loss": train_metrics["loss"],
-                    "train_accuracy": train_metrics["accuracy"], "val_loss": validation_metrics["loss"],
-                    "val_accuracy": validation_metrics["accuracy"], "seconds": train_metrics["seconds"],
-                }
-                epoch_rows.append(record)
-                st.session_state.history = list(epoch_rows)
-                progress.progress(epoch / epochs, text=f"Completed epoch {epoch}/{epochs}")
-                with live.container():
-                    a, b, c, d = st.columns(4)
-                    a.metric("Train loss", f"{train_metrics['loss']:.3f}")
-                    b.metric("Train accuracy", f"{train_metrics['accuracy']:.1%}")
-                    c.metric("Validation loss", f"{validation_metrics['loss']:.3f}")
-                    d.metric("Validation accuracy", f"{validation_metrics['accuracy']:.1%}")
-                    show_history(epoch_rows)
-
-            train_model(model, train_loader, validation_loader, device=device, epochs=epochs,
-                        learning_rate=float(learning_rate), on_epoch=epoch_callback, on_batch=batch_callback)
-            batch_progress.empty()
-            st.success("Training finished. Review the curves, then evaluate or try an uploaded image.")
+            st.session_state.model_dataset = dataset_key
+            st.session_state.run_config = {**config, "learning_rate": float(learning_rate)}
+            st.session_state.current_epoch = 0
+            st.session_state.history = []
+            st.session_state.last_eval = None
+            st.success(f"New {dataset_choice} run initialized. Train the first epoch when ready.")
         except Exception as exc:
-            st.error(f"Training failed: {exc}")
+            st.error(f"Could not initialize training: {exc}")
             st.exception(exc)
+
+    if st.session_state.model is None or st.session_state.run_config is None:
+        st.info("Start a new run or load a checkpoint to begin training.")
+    else:
+        st.write(f"**Active run:** {st.session_state.model_dataset.upper()} · epoch {st.session_state.current_epoch}/{epochs}")
+        if st.session_state.current_epoch >= epochs:
+            st.success("Target epoch count reached. Increase the Epochs setting to continue training.")
+        can_train = st.session_state.current_epoch < epochs
+        next_col, all_col = st.columns(2)
+        with next_col:
+            train_next = st.button("Train next epoch", disabled=not can_train, use_container_width=True, key="train-next")
+        with all_col:
+            train_remaining = st.button("Train remaining epochs", disabled=not can_train, use_container_width=True, key="train-remaining")
+
+        if train_next or train_remaining:
+            config = st.session_state.run_config
+            try:
+                train_loader, validation_loader, _test_loader, _class_names = get_loaders(
+                    config["dataset_name"], config["batch_size"], config["train_limit"],
+                    config["validation_limit"], config["test_limit"], config["augment"], config["seed"]
+                )
+                model = st.session_state.model.to(device)
+                optimizer = st.session_state.optimizer
+                criterion = nn.CrossEntropyLoss()
+                total_steps = 1 if train_next else epochs - st.session_state.current_epoch
+                progress = st.progress(0, text="Preparing epoch…")
+                batch_progress = st.progress(0, text="Waiting for first batch…")
+                live = st.empty()
+
+                for step in range(total_steps):
+                    epoch_number = st.session_state.current_epoch + 1
+
+                    def batch_callback(batch_index: int, batch_count: int, rolling_loss: float) -> None:
+                        batch_progress.progress(
+                            batch_index / max(batch_count, 1),
+                            text=f"Epoch {epoch_number} · batch {batch_index}/{batch_count} · running loss {rolling_loss:.3f}",
+                        )
+
+                    train_metrics = run_epoch(
+                        model, train_loader, criterion, device, optimizer=optimizer, on_batch=batch_callback
+                    )
+                    validation_metrics = run_epoch(model, validation_loader, criterion, device)
+                    record = {
+                        "epoch": float(epoch_number),
+                        "train_loss": train_metrics["loss"],
+                        "train_accuracy": train_metrics["accuracy"],
+                        "val_loss": validation_metrics["loss"],
+                        "val_accuracy": validation_metrics["accuracy"],
+                        "seconds": train_metrics["seconds"],
+                    }
+                    st.session_state.history = [*st.session_state.history, record]
+                    st.session_state.current_epoch = epoch_number
+                    progress.progress((step + 1) / total_steps, text=f"Completed epoch {epoch_number}/{epochs}")
+                    with live.container():
+                        a, b, c, d = st.columns(4)
+                        a.metric("Train loss", f"{train_metrics['loss']:.3f}")
+                        b.metric("Train accuracy", f"{train_metrics['accuracy']:.1%}")
+                        c.metric("Validation loss", f"{validation_metrics['loss']:.3f}")
+                        d.metric("Validation accuracy", f"{validation_metrics['accuracy']:.1%}")
+                        show_history(st.session_state.history)
+                batch_progress.empty()
+                st.success(f"Training paused at epoch {st.session_state.current_epoch}. You can resume with the next epoch.")
+            except Exception as exc:
+                st.error(f"Training failed: {exc}")
+                st.exception(exc)
+
     show_history(st.session_state.history)
     if st.session_state.model is not None:
         st.divider()
-        st.subheader("Save your model")
-        checkpoint_name = st.text_input("Checkpoint filename", value="checkpoints/cifar10-cnn.pt")
-        if st.button("Save checkpoint"):
+        st.subheader("Save a resumable checkpoint")
+        checkpoint_name = st.text_input("Checkpoint filename", value="checkpoints/cifar-model.pt")
+        if st.button("Save checkpoint", key="save-checkpoint"):
             try:
                 latest = st.session_state.history[-1] if st.session_state.history else {}
-                saved = save_checkpoint(checkpoint_name, st.session_state.model,
-                                        epoch=int(latest.get("epoch", 0)),
-                                        accuracy=latest.get("val_accuracy"), class_names=tuple(st.session_state.class_names))
-                st.success(f"Saved checkpoint to {saved}")
+                saved = save_checkpoint(
+                    checkpoint_name, st.session_state.model,
+                    epoch=int(st.session_state.current_epoch),
+                    accuracy=latest.get("val_accuracy"),
+                    class_names=tuple(st.session_state.class_names),
+                    optimizer=st.session_state.optimizer,
+                    history=st.session_state.history,
+                )
+                st.success(f"Saved resumable checkpoint to {saved}")
             except (OSError, ValueError) as exc:
                 st.error(f"Could not save checkpoint: {exc}")
 
