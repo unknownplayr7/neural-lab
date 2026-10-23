@@ -113,7 +113,6 @@ def save_checkpoint(
     epoch: int,
     class_names: tuple[str, ...] = CIFAR10_CLASSES,
     accuracy: float | None = None,
-    class_names: tuple[str, ...] = CIFAR10_CLASSES,
     optimizer: torch.optim.Optimizer | None = None,
     history: list[dict[str, float]] | None = None,
 ) -> Path:
