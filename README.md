@@ -13,6 +13,8 @@ An interactive image-classification workbench built with **PyTorch** and **Strea
 - **Visible learning:** live batch progress, epoch metrics, train/validation curves, and held-out test metrics.
 - **Evaluation:** confusion matrix and per-class accuracy on a separate test split.
 - **Prediction sandbox:** upload a photo and inspect the top class probabilities.
+- **Pause and resume:** train one epoch at a time or run the remaining epochs; checkpoints preserve optimizer state and metric history.
+- **Error analysis:** inspect a confusion matrix, per-class accuracy, and a gallery of misclassified test images.
 - **Portable checkpoints:** save model weights and metadata, then reload them.
 - **Quality baseline:** reusable training code, tests, and GitHub Actions CI.
 
