@@ -102,3 +102,53 @@ def train_model(
         if on_epoch is not None:
             on_epoch(epoch, train_metrics, test_metrics)
     return history
+
+
+
+def evaluate_classifier(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    num_classes: int = 10,
+) -> dict[str, object]:
+    """Evaluate once and return aggregate metrics plus a true-row confusion matrix."""
+    if num_classes < 2:
+        raise ValueError("num_classes must be at least 2")
+    model.to(device)
+    model.eval()
+    criterion = nn.CrossEntropyLoss(reduction="sum")
+    confusion = torch.zeros((num_classes, num_classes), dtype=torch.int64)
+    total_loss = 0.0
+    total_seen = 0
+    started = time.perf_counter()
+
+    with torch.inference_mode():
+        for images, labels in loader:
+            images = images.to(device)
+            labels = labels.to(device)
+            logits = model(images)
+            predictions = logits.argmax(dim=1)
+            total_loss += float(criterion(logits, labels).item())
+            total_seen += int(labels.size(0))
+            encoded = labels * num_classes + predictions
+            confusion += torch.bincount(encoded.cpu(), minlength=num_classes * num_classes).reshape(num_classes, num_classes)
+
+    if total_seen == 0:
+        raise ValueError("DataLoader produced no batches")
+    correct = int(confusion.diag().sum().item())
+    per_class = []
+    for index in range(num_classes):
+        support = int(confusion[index].sum().item())
+        per_class.append({
+            "class_index": index,
+            "support": support,
+            "accuracy": (int(confusion[index, index].item()) / support) if support else None,
+        })
+    return {
+        "loss": total_loss / total_seen,
+        "accuracy": correct / total_seen,
+        "examples": total_seen,
+        "seconds": time.perf_counter() - started,
+        "confusion_matrix": confusion.tolist(),
+        "per_class": per_class,
+    }
