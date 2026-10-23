@@ -110,6 +110,7 @@ def evaluate_classifier(
     loader: DataLoader,
     device: torch.device,
     num_classes: int = 10,
+    max_misclassified: int = 12,
 ) -> dict[str, object]:
     """Evaluate once and return aggregate metrics plus a true-row confusion matrix."""
     if num_classes < 2:
@@ -120,6 +121,7 @@ def evaluate_classifier(
     confusion = torch.zeros((num_classes, num_classes), dtype=torch.int64)
     total_loss = 0.0
     total_seen = 0
+    misclassified: list[dict[str, object]] = []
     started = time.perf_counter()
 
     with torch.inference_mode():
@@ -132,6 +134,16 @@ def evaluate_classifier(
             total_seen += int(labels.size(0))
             encoded = labels * num_classes + predictions
             confusion += torch.bincount(encoded.cpu(), minlength=num_classes * num_classes).reshape(num_classes, num_classes)
+            if len(misclassified) < max_misclassified:
+                probabilities = torch.softmax(logits, dim=1)
+                wrong_indices = torch.nonzero(predictions != labels, as_tuple=False).flatten()
+                for index in wrong_indices[: max_misclassified - len(misclassified)].tolist():
+                    misclassified.append({
+                        "image": images[index].detach().cpu(),
+                        "true_label": int(labels[index].item()),
+                        "predicted_label": int(predictions[index].item()),
+                        "confidence": float(probabilities[index, predictions[index]].item()),
+                    })
 
     if total_seen == 0:
         raise ValueError("DataLoader produced no batches")
@@ -151,4 +163,5 @@ def evaluate_classifier(
         "seconds": time.perf_counter() - started,
         "confusion_matrix": confusion.tolist(),
         "per_class": per_class,
+        "misclassified": misclassified,
     }
