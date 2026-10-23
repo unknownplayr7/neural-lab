@@ -92,6 +92,20 @@ def available_device(preference: str = "auto") -> torch.device:
     return torch.device("cpu")
 
 
+
+def _cpu_tree(value: Any) -> Any:
+    """Move tensors nested in optimizer state to CPU for portable checkpoints."""
+    if torch.is_tensor(value):
+        return value.detach().cpu()
+    if isinstance(value, dict):
+        return {key: _cpu_tree(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_cpu_tree(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_cpu_tree(item) for item in value)
+    return value
+
+
 def save_checkpoint(
     path: str | Path,
     model: CifarCNN,
@@ -99,6 +113,9 @@ def save_checkpoint(
     epoch: int,
     class_names: tuple[str, ...] = CIFAR10_CLASSES,
     accuracy: float | None = None,
+    class_names: tuple[str, ...] = CIFAR10_CLASSES,
+    optimizer: torch.optim.Optimizer | None = None,
+    history: list[dict[str, float]] | None = None,
 ) -> Path:
     """Save weights plus small, explicit metadata."""
     target = Path(path)
@@ -110,6 +127,8 @@ def save_checkpoint(
         "class_names": list(class_names),
         "accuracy": accuracy,
         "architecture": "CifarCNN",
+        "history": history or [],
+        "optimizer_state_dict": _cpu_tree(optimizer.state_dict()) if optimizer is not None else None,
     }
     torch.save(payload, target)
     return target
