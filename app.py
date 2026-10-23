@@ -247,7 +247,7 @@ with tab_train:
 
 with tab_evaluate:
     st.subheader("Held-out evaluation")
-    st.write("Evaluation uses the CIFAR-10 test split and does not update model weights.")
+    st.write(f"Evaluation uses the held-out {st.session_state.model_dataset or dataset_key} test split and does not update model weights.")
     if st.session_state.model is None:
         st.info("Train a model or load a checkpoint before evaluating.")
     else:
@@ -315,8 +315,8 @@ with tab_evaluate:
 
 with tab_predict:
     st.subheader("Try an image")
-    st.write("Upload a picture to see which CIFAR-10 class the model considers most likely.")
-    st.warning("This model only knows ten CIFAR-10 classes. A confident answer for an unrelated object can still be wrong.")
+    st.write("Upload a picture to see which class the selected model considers most likely.")
+    st.warning("This model only knows the selected dataset’s classes. A confident answer for an unrelated object can still be wrong.")
     uploaded_image = st.file_uploader("Choose an image", type=["png", "jpg", "jpeg", "webp"], key="image-upload")
     if uploaded_image is not None:
         try:
@@ -326,7 +326,7 @@ with tab_predict:
                 st.info("Train a model or load a checkpoint first.")
             elif st.button("Classify image", type="primary"):
                 tensor = prepare_image(image, st.session_state.model_dataset or dataset_key).to(device)
-                model = st.session_state.model
+                model = st.session_state.model.to(device)
                 model.eval()
                 with torch.inference_mode():
                     probabilities = torch.softmax(model(tensor)[0], dim=0).cpu().numpy()
