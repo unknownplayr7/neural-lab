@@ -12,7 +12,7 @@ from torch import nn
 
 from neural_lab.data import make_loaders
 from neural_lab.model import CIFAR10_CLASSES, CIFAR10_MEAN, CIFAR10_STD, CifarCNN, available_device, save_checkpoint
-from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, train_model
+from neural_lab.training import evaluate_classifier, seed_everything, train_model
 
 st.set_page_config(page_title="Neural Lab", page_icon="🧠", layout="wide")
 st.markdown("""
