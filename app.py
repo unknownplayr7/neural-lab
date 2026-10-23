@@ -270,14 +270,17 @@ with tab_evaluate:
             image_plot = ax.imshow(matrix, interpolation="nearest", cmap="Blues")
             ax.set(title="Confusion matrix", xlabel="Predicted class", ylabel="True class",
                    xticks=range(len(st.session_state.class_names)), yticks=range(len(st.session_state.class_names)))
-            ax.set_xticklabels(st.session_state.class_names, rotation=45, ha="right")
-            ax.set_yticklabels(st.session_state.class_names)
+            tick_step = 1 if len(st.session_state.class_names) <= 20 else 5
+            ticks = list(range(0, len(st.session_state.class_names), tick_step))
+            ax.set_xticks(ticks, labels=[st.session_state.class_names[i] for i in ticks], rotation=45, ha="right")
+            ax.set_yticks(ticks, labels=[st.session_state.class_names[i] for i in ticks])
             fig.colorbar(image_plot, ax=ax, fraction=0.046, pad=0.04)
             threshold = matrix.max() / 2 if matrix.size else 0
-            for row in range(matrix.shape[0]):
-                for col in range(matrix.shape[1]):
-                    ax.text(col, row, str(matrix[row, col]), ha="center", va="center",
-                            color="white" if matrix[row, col] > threshold else "black", fontsize=8)
+            if matrix.shape[0] <= 20:
+                for row in range(matrix.shape[0]):
+                    for col in range(matrix.shape[1]):
+                        ax.text(col, row, str(matrix[row, col]), ha="center", va="center",
+                                color="white" if matrix[row, col] > threshold else "black", fontsize=8)
             fig.tight_layout()
             st.pyplot(fig)
             plt.close(fig)
