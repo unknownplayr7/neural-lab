@@ -244,6 +244,7 @@ with tab_train:
                     class_names=tuple(st.session_state.class_names),
                     optimizer=st.session_state.optimizer,
                     history=st.session_state.history,
+                    run_config=st.session_state.run_config,
                 )
                 st.success(f"Saved resumable checkpoint to {saved}")
             except (OSError, ValueError) as exc:
@@ -350,10 +351,16 @@ with tab_evaluate:
             st.session_state.model_dataset = model_dataset
             st.session_state.current_epoch = restored_epoch
             st.session_state.history = restored_history
+            saved_config = payload.get("run_config") or {}
             st.session_state.run_config = {
-                "dataset_name": model_dataset, "batch_size": int(batch_size),
-                "train_limit": int(train_limit), "validation_limit": int(validation_limit),
-                "test_limit": int(test_limit), "augment": bool(augment), "seed": int(seed),
+                "dataset_name": model_dataset,
+                "batch_size": int(saved_config.get("batch_size", batch_size)),
+                "train_limit": int(saved_config.get("train_limit", train_limit)),
+                "validation_limit": int(saved_config.get("validation_limit", validation_limit)),
+                "test_limit": int(saved_config.get("test_limit", test_limit)),
+                "augment": bool(saved_config.get("augment", augment)),
+                "seed": int(saved_config.get("seed", seed)),
+                "learning_rate": float(saved_config.get("learning_rate", learning_rate)),
             }
             st.session_state.last_eval = None
             if optimizer_state:
