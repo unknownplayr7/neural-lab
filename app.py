@@ -182,6 +182,10 @@ with tab_train:
                 )
                 model = st.session_state.model.to(device)
                 optimizer = st.session_state.optimizer
+                for optimizer_state in optimizer.state.values():
+                    for state_key, state_value in optimizer_state.items():
+                        if torch.is_tensor(state_value):
+                            optimizer_state[state_key] = state_value.to(device)
                 criterion = nn.CrossEntropyLoss()
                 total_steps = 1 if train_next else epochs - st.session_state.current_epoch
                 progress = st.progress(0, text="Preparing epoch…")
@@ -305,7 +309,7 @@ with tab_evaluate:
                     axis.imshow(pixels)
                     true_name = st.session_state.class_names[mistake["true_label"]]
                     predicted_name = st.session_state.class_names[mistake["predicted_label"]]
-                    axis.set_title("True: {}\\nPred: {} ({:.0%})".format(true_name, predicted_name, mistake["confidence"]), fontsize=9)
+                    axis.set_title("True: {}\nPred: {} ({:.0%})".format(true_name, predicted_name, mistake["confidence"]), fontsize=9)
                     axis.axis("off")
                 for axis in axes[len(mistakes):]:
                     axis.axis("off")
@@ -389,7 +393,7 @@ with tab_about:
     st.subheader("What is being trained?")
     st.markdown("""
 **Architecture:** convolution, batch normalization, ReLU blocks, max-pooling, dropout,
-adaptive average pooling, and a linear ten-class output layer.
+adaptive average pooling, and a linear output layer sized to the selected dataset.
 
 **Loss:** cross-entropy. **Optimizer:** AdamW with weight decay.
 **Preprocessing:** RGB conversion, 32×32 resize, and dataset-specific channel normalization.
@@ -397,11 +401,11 @@ Training augmentation uses random crop and horizontal flip. CIFAR-10 and CIFAR-1
 
 ### What the metrics mean
 - **Training accuracy** measures performance on examples used for gradient updates.
-- **Test accuracy** measures performance on held-out examples. Repeatedly tuning against a test split can make it less independent.
+- **Validation accuracy** guides training decisions. **Test accuracy** is measured separately in the Evaluate tab; repeatedly tuning against a test split can make it less independent.
 - **Loss** measures confidence-weighted classification error. Lower is generally better.
 
 ### Device notes
 Auto-selection prefers NVIDIA CUDA, then Apple Silicon MPS, then CPU. MPS speed and behavior depend on installed PyTorch/macOS versions; CPU is the fallback.
 """)
-    st.code("Input:  N × 3 × 32 × 32\nOutput: N × 10 logits", language="text")
+    st.code("Input:  N × 3 × 32 × 32\nOutput: N × class_count logits", language="text")
     st.caption("Neural Lab is an educational experiment, not a general-purpose object detector.")
