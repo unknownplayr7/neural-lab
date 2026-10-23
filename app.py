@@ -329,12 +329,33 @@ with tab_evaluate:
             checkpoint_classes = tuple(payload.get("class_names", CIFAR10_CLASSES))
             model = CifarCNN(num_classes=len(checkpoint_classes))
             model.load_state_dict(payload["model_state_dict"])
-            st.session_state.model = model.to(device)
+            model = model.to(device)
+            model_dataset = "cifar100" if len(checkpoint_classes) > 10 else "cifar10"
+            optimizer = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=1e-4)
+            optimizer_state = payload.get("optimizer_state_dict")
+            if optimizer_state:
+                optimizer.load_state_dict(optimizer_state)
+                restored_epoch = int(payload.get("epoch", 0))
+                restored_history = payload.get("history", [])
+            else:
+                restored_epoch = 0
+                restored_history = []
+            st.session_state.model = model
+            st.session_state.optimizer = optimizer
             st.session_state.class_names = checkpoint_classes
-            st.session_state.model_dataset = "cifar100" if len(checkpoint_classes) > 10 else "cifar10"
-            st.session_state.history = []
+            st.session_state.model_dataset = model_dataset
+            st.session_state.current_epoch = restored_epoch
+            st.session_state.history = restored_history
+            st.session_state.run_config = {
+                "dataset_name": model_dataset, "batch_size": int(batch_size),
+                "train_limit": int(train_limit), "validation_limit": int(validation_limit),
+                "test_limit": int(test_limit), "augment": bool(augment), "seed": int(seed),
+            }
             st.session_state.last_eval = None
-            st.success(f"Loaded checkpoint (epoch {payload.get('epoch', 'unknown')}).")
+            if optimizer_state:
+                st.success("Resumed checkpoint with optimizer state and history at epoch {}.".format(restored_epoch))
+            else:
+                st.success("Loaded model weights. No optimizer state was saved, so training starts at epoch 0.")
         except Exception as exc:
             st.error(f"Could not load checkpoint: {exc}")
 
