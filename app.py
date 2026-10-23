@@ -10,8 +10,8 @@ import torch
 from PIL import Image, ImageOps
 from torch import nn
 
-from neural_lab.data import make_loaders
-from neural_lab.model import CIFAR10_CLASSES, CIFAR10_MEAN, CIFAR10_STD, CifarCNN, available_device, save_checkpoint
+from neural_lab.data import dataset_stats, make_loaders
+from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint
 from neural_lab.training import evaluate_classifier, seed_everything, train_model
 
 st.set_page_config(page_title="Neural Lab", page_icon="🧠", layout="wide")
@@ -36,6 +36,10 @@ if "history" not in st.session_state:
     st.session_state.history = []
 if "last_eval" not in st.session_state:
     st.session_state.last_eval = None
+if "class_names" not in st.session_state:
+    st.session_state.class_names = CIFAR10_CLASSES
+if "model_dataset" not in st.session_state:
+    st.session_state.model_dataset = None
 
 
 def device_options() -> list[str]:
@@ -48,19 +52,19 @@ def device_options() -> list[str]:
 
 
 @st.cache_resource(show_spinner=False)
-def get_loaders(batch_size: int, train_limit: int, test_limit: int, augment: bool, seed: int):
+def get_loaders(dataset_name: str, batch_size: int, train_limit: int, validation_limit: int, test_limit: int, augment: bool, seed: int):
     return make_loaders(
-        root="data", batch_size=batch_size,
-        train_limit=None if train_limit == 0 else train_limit,
-        test_limit=None if test_limit == 0 else test_limit,
-        augment=augment, num_workers=0, seed=seed,
+        dataset_name=dataset_name, batch_size=batch_size,
+        train_limit=train_limit, validation_limit=validation_limit,
+        test_limit=test_limit, augment=augment, num_workers=0, seed=seed,
     )
 
 
-def prepare_image(image: Image.Image) -> torch.Tensor:
+def prepare_image(image: Image.Image, dataset_name: str = "cifar10") -> torch.Tensor:
     image = ImageOps.exif_transpose(image).convert("RGB").resize((32, 32), Image.Resampling.BILINEAR)
     array = np.asarray(image, dtype=np.float32) / 255.0
-    array = (array - np.asarray(CIFAR10_MEAN, dtype=np.float32)) / np.asarray(CIFAR10_STD, dtype=np.float32)
+    mean, std = dataset_stats(dataset_name)
+    array = (array - np.asarray(mean, dtype=np.float32)) / np.asarray(std, dtype=np.float32)
     return torch.from_numpy(array.copy()).permute(2, 0, 1).unsqueeze(0)
 
 
@@ -74,7 +78,7 @@ def show_history(history: list[dict[str, float]]) -> None:
     with left:
         fig, ax = plt.subplots(figsize=(6, 3.2))
         ax.plot([r["epoch"] for r in history], [r["train_loss"] for r in history], marker="o", label="Train")
-        ax.plot([r["epoch"] for r in history], [r["test_loss"] for r in history], marker="o", label="Test")
+        ax.plot([r["epoch"] for r in history], [r["val_loss"] for r in history], marker="o", label="Validation")
         ax.set(title="Loss by epoch", xlabel="Epoch", ylabel="Cross-entropy loss")
         ax.grid(alpha=.25)
         ax.legend()
@@ -84,7 +88,7 @@ def show_history(history: list[dict[str, float]]) -> None:
     with right:
         fig, ax = plt.subplots(figsize=(6, 3.2))
         ax.plot([r["epoch"] for r in history], [100*r["train_accuracy"] for r in history], marker="o", label="Train")
-        ax.plot([r["epoch"] for r in history], [100*r["test_accuracy"] for r in history], marker="o", label="Test")
+        ax.plot([r["epoch"] for r in history], [100*r["val_accuracy"] for r in history], marker="o", label="Test")
         ax.set(title="Accuracy by epoch", xlabel="Epoch", ylabel="Accuracy (%)", ylim=(0, 100))
         ax.grid(alpha=.25)
         ax.legend()
@@ -95,15 +99,18 @@ def show_history(history: list[dict[str, float]]) -> None:
 
 with st.sidebar:
     st.header("Experiment setup")
+    dataset_choice = st.selectbox("Dataset", ["CIFAR-10", "CIFAR-100"], index=0)
+    dataset_key = "cifar100" if dataset_choice == "CIFAR-100" else "cifar10"
     device_choice = st.selectbox("Compute device", device_options(), index=0, help="Auto prefers CUDA, then Apple Silicon MPS, then CPU.")
     epochs = st.slider("Epochs", min_value=1, max_value=30, value=5)
     batch_size = st.select_slider("Batch size", options=[16, 32, 64, 128, 256], value=64)
     learning_rate = st.select_slider("Learning rate", options=[0.0001, 0.0003, 0.001, 0.003, 0.01], value=0.001, format_func=lambda x: f"{x:g}")
-    train_limit = st.select_slider("Training examples", options=[1000, 2500, 5000, 10000, 20000, 50000], value=10000, help="Full CIFAR-10 training uses 50,000 examples.")
-    test_limit = st.select_slider("Evaluation examples", options=[1000, 2500, 5000, 10000], value=5000)
+    train_limit = st.select_slider("Training examples", options=[1000, 2500, 5000, 10000, 20000, 40000], value=10000, help="Streaming caps examples read per epoch; 40,000 leaves room for validation.")
+    validation_limit = st.select_slider("Validation examples", options=[1000, 2500, 5000], value=2500)
+    test_limit = st.select_slider("Held-out test examples", options=[1000, 2500, 5000, 10000], value=5000)
     seed = st.number_input("Random seed", min_value=0, max_value=2_147_483_647, value=42, step=1)
     augment = st.toggle("Random crop + flip augmentation", value=True)
-    st.caption("Dataset downloads on first use. Training runs locally in this Streamlit process.")
+    st.caption("Images stream from Hugging Face as needed; the full dataset is not downloaded to your Mac.")
 
 try:
     device = available_device(device_choice)
@@ -119,17 +126,19 @@ with tab_train:
     c1.metric("Device", str(device).upper())
     c2.metric("Training samples", f"{train_limit:,}")
     c3.metric("Batch size", batch_size)
-    st.write("Watch training and held-out test metrics to spot underfitting or overfitting.")
+    st.write("Watch training and validation metrics to spot underfitting or overfitting. The held-out test split is reserved for final evaluation.")
 
     if st.button("Start training", type="primary", use_container_width=True):
         seed_everything(int(seed))
-        model = CifarCNN().to(device)
+        model = CifarCNN(num_classes=100 if dataset_key == "cifar100" else 10).to(device)
         st.session_state.model = model
+        st.session_state.model_dataset = dataset_key
         st.session_state.history = []
         st.session_state.last_eval = None
         try:
             with st.spinner("Preparing CIFAR-10. The first run may download the dataset…"):
-                train_loader, test_loader = get_loaders(batch_size, train_limit, test_limit, augment, int(seed))
+                train_loader, validation_loader, _test_loader, class_names = get_loaders(dataset_key, batch_size, train_limit, validation_limit, test_limit, augment, int(seed))
+            st.session_state.class_names = class_names
             progress = st.progress(0, text="Preparing training run…")
             live = st.empty()
             batch_progress = st.progress(0, text="Waiting for first batch…")
@@ -138,11 +147,11 @@ with tab_train:
             def batch_callback(batch_index: int, batch_count: int, rolling_loss: float) -> None:
                 batch_progress.progress(batch_index / max(batch_count, 1), text=f"Batch {batch_index}/{batch_count} · running loss {rolling_loss:.3f}")
 
-            def epoch_callback(epoch: int, train_metrics: dict[str, float], test_metrics: dict[str, float]) -> None:
+            def epoch_callback(epoch: int, train_metrics: dict[str, float], validation_metrics: dict[str, float]) -> None:
                 record = {
                     "epoch": float(epoch), "train_loss": train_metrics["loss"],
-                    "train_accuracy": train_metrics["accuracy"], "test_loss": test_metrics["loss"],
-                    "test_accuracy": test_metrics["accuracy"], "seconds": train_metrics["seconds"],
+                    "train_accuracy": train_metrics["accuracy"], "val_loss": validation_metrics["loss"],
+                    "val_accuracy": validation_metrics["accuracy"], "seconds": train_metrics["seconds"],
                 }
                 epoch_rows.append(record)
                 st.session_state.history = list(epoch_rows)
@@ -151,11 +160,11 @@ with tab_train:
                     a, b, c, d = st.columns(4)
                     a.metric("Train loss", f"{train_metrics['loss']:.3f}")
                     b.metric("Train accuracy", f"{train_metrics['accuracy']:.1%}")
-                    c.metric("Test loss", f"{test_metrics['loss']:.3f}")
-                    d.metric("Test accuracy", f"{test_metrics['accuracy']:.1%}")
+                    c.metric("Validation loss", f"{validation_metrics['loss']:.3f}")
+                    d.metric("Validation accuracy", f"{validation_metrics['accuracy']:.1%}")
                     show_history(epoch_rows)
 
-            train_model(model, train_loader, test_loader, device=device, epochs=epochs,
+            train_model(model, train_loader, validation_loader, device=device, epochs=epochs,
                         learning_rate=float(learning_rate), on_epoch=epoch_callback, on_batch=batch_callback)
             batch_progress.empty()
             st.success("Training finished. Review the curves, then evaluate or try an uploaded image.")
@@ -172,7 +181,7 @@ with tab_train:
                 latest = st.session_state.history[-1] if st.session_state.history else {}
                 saved = save_checkpoint(checkpoint_name, st.session_state.model,
                                         epoch=int(latest.get("epoch", 0)),
-                                        accuracy=latest.get("test_accuracy"))
+                                        accuracy=latest.get("val_accuracy"), class_names=tuple(st.session_state.class_names))
                 st.success(f"Saved checkpoint to {saved}")
             except (OSError, ValueError) as exc:
                 st.error(f"Could not save checkpoint: {exc}")
@@ -186,8 +195,8 @@ with tab_evaluate:
         if st.button("Evaluate model", type="primary"):
             try:
                 with st.spinner("Evaluating…"):
-                    _, test_loader = get_loaders(batch_size, train_limit, test_limit, augment, int(seed))
-                    st.session_state.last_eval = evaluate_classifier(st.session_state.model.to(device), test_loader, device, num_classes=len(CIFAR10_CLASSES))
+                    _, _, test_loader, class_names = get_loaders(st.session_state.model_dataset or dataset_key, batch_size, train_limit, validation_limit, test_limit, augment, int(seed))
+                    st.session_state.last_eval = evaluate_classifier(st.session_state.model.to(device), test_loader, device, num_classes=len(st.session_state.class_names))
             except Exception as exc:
                 st.error(f"Evaluation failed: {exc}")
         metrics = st.session_state.last_eval
@@ -201,9 +210,9 @@ with tab_evaluate:
             fig, ax = plt.subplots(figsize=(8, 6))
             image_plot = ax.imshow(matrix, interpolation="nearest", cmap="Blues")
             ax.set(title="Confusion matrix", xlabel="Predicted class", ylabel="True class",
-                   xticks=range(len(CIFAR10_CLASSES)), yticks=range(len(CIFAR10_CLASSES)))
-            ax.set_xticklabels(CIFAR10_CLASSES, rotation=45, ha="right")
-            ax.set_yticklabels(CIFAR10_CLASSES)
+                   xticks=range(len(st.session_state.class_names)), yticks=range(len(st.session_state.class_names)))
+            ax.set_xticklabels(st.session_state.class_names, rotation=45, ha="right")
+            ax.set_yticklabels(st.session_state.class_names)
             fig.colorbar(image_plot, ax=ax, fraction=0.046, pad=0.04)
             threshold = matrix.max() / 2 if matrix.size else 0
             for row in range(matrix.shape[0]):
@@ -215,7 +224,7 @@ with tab_evaluate:
             plt.close(fig)
             class_rows = []
             for row in metrics["per_class"]:
-                class_rows.append({"Class": CIFAR10_CLASSES[row["class_index"]],
+                class_rows.append({"Class": st.session_state.class_names[row["class_index"]],
                                    "Accuracy": row["accuracy"], "Support": row["support"]})
             st.subheader("Per-class accuracy")
             st.dataframe(class_rows, use_container_width=True, hide_index=True)
@@ -233,9 +242,12 @@ with tab_evaluate:
                 payload = torch.load(payload_bytes, map_location="cpu")
             if not isinstance(payload, dict) or "model_state_dict" not in payload:
                 raise ValueError("This file is not a supported Neural Lab checkpoint.")
-            model = CifarCNN()
+            checkpoint_classes = tuple(payload.get("class_names", CIFAR10_CLASSES))
+            model = CifarCNN(num_classes=len(checkpoint_classes))
             model.load_state_dict(payload["model_state_dict"])
             st.session_state.model = model.to(device)
+            st.session_state.class_names = checkpoint_classes
+            st.session_state.model_dataset = "cifar100" if len(checkpoint_classes) > 10 else "cifar10"
             st.session_state.history = []
             st.session_state.last_eval = None
             st.success(f"Loaded checkpoint (epoch {payload.get('epoch', 'unknown')}).")
@@ -261,9 +273,9 @@ with tab_predict:
                     probabilities = torch.softmax(model(tensor)[0], dim=0).cpu().numpy()
                 top_indices = np.argsort(probabilities)[::-1][:5]
                 best = int(top_indices[0])
-                st.metric("Top prediction", CIFAR10_CLASSES[best], f"{probabilities[best]:.1%} model confidence")
-                st.bar_chart({CIFAR10_CLASSES[int(i)]: float(probabilities[int(i)]) for i in top_indices})
-                st.dataframe([{"Class": CIFAR10_CLASSES[int(i)], "Probability": float(probabilities[int(i)])} for i in top_indices],
+                st.metric("Top prediction", st.session_state.class_names[best], f"{probabilities[best]:.1%} model confidence")
+                st.bar_chart({st.session_state.class_names[int(i)]: float(probabilities[int(i)]) for i in top_indices})
+                st.dataframe([{"Class": st.session_state.class_names[int(i)], "Probability": float(probabilities[int(i)])} for i in top_indices],
                              use_container_width=True, hide_index=True)
         except (OSError, ValueError) as exc:
             st.error(f"Could not read that image: {exc}")
@@ -275,8 +287,8 @@ with tab_about:
 adaptive average pooling, and a linear ten-class output layer.
 
 **Loss:** cross-entropy. **Optimizer:** AdamW with weight decay.
-**Preprocessing:** RGB conversion, 32×32 resize, and CIFAR-10 channel normalization.
-Training augmentation uses random crop and horizontal flip.
+**Preprocessing:** RGB conversion, 32×32 resize, and dataset-specific channel normalization.
+Training augmentation uses random crop and horizontal flip. CIFAR-10 and CIFAR-100 stream from Hugging Face instead of storing full dataset archives locally.
 
 ### What the metrics mean
 - **Training accuracy** measures performance on examples used for gradient updates.
