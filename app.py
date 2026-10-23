@@ -291,6 +291,28 @@ with tab_evaluate:
             st.subheader("Per-class accuracy")
             st.dataframe(class_rows, use_container_width=True, hide_index=True)
 
+            mistakes = metrics.get("misclassified", [])
+            if mistakes:
+                st.subheader("Examples the model got wrong")
+                mean, std = dataset_stats(st.session_state.model_dataset or dataset_key)
+                columns = 4
+                rows = (len(mistakes) + columns - 1) // columns
+                fig, axes = plt.subplots(rows, columns, figsize=(12, 3.0 * rows))
+                axes = np.asarray(axes).reshape(-1)
+                for axis, mistake in zip(axes, mistakes):
+                    pixels = mistake["image"].permute(1, 2, 0).numpy()
+                    pixels = np.clip(pixels * np.asarray(std) + np.asarray(mean), 0, 1)
+                    axis.imshow(pixels)
+                    true_name = st.session_state.class_names[mistake["true_label"]]
+                    predicted_name = st.session_state.class_names[mistake["predicted_label"]]
+                    axis.set_title("True: {}\\nPred: {} ({:.0%})".format(true_name, predicted_name, mistake["confidence"]), fontsize=9)
+                    axis.axis("off")
+                for axis in axes[len(mistakes):]:
+                    axis.axis("off")
+                fig.tight_layout()
+                st.pyplot(fig)
+                plt.close(fig)
+
     st.divider()
     st.subheader("Load checkpoint")
     uploaded_checkpoint = st.file_uploader("Checkpoint (.pt or .pth)", type=["pt", "pth"], key="checkpoint-upload")
