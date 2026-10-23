@@ -88,7 +88,7 @@ def show_history(history: list[dict[str, float]]) -> None:
     with right:
         fig, ax = plt.subplots(figsize=(6, 3.2))
         ax.plot([r["epoch"] for r in history], [100*r["train_accuracy"] for r in history], marker="o", label="Train")
-        ax.plot([r["epoch"] for r in history], [100*r["val_accuracy"] for r in history], marker="o", label="Test")
+        ax.plot([r["epoch"] for r in history], [100*r["val_accuracy"] for r in history], marker="o", label="Validation")
         ax.set(title="Accuracy by epoch", xlabel="Epoch", ylabel="Accuracy (%)", ylim=(0, 100))
         ax.grid(alpha=.25)
         ax.legend()
@@ -136,7 +136,7 @@ with tab_train:
         st.session_state.history = []
         st.session_state.last_eval = None
         try:
-            with st.spinner("Preparing CIFAR-10. The first run may download the dataset…"):
+            with st.spinner("Connecting to Hugging Face and preparing streaming data…"):
                 train_loader, validation_loader, _test_loader, class_names = get_loaders(dataset_key, batch_size, train_limit, validation_limit, test_limit, augment, int(seed))
             st.session_state.class_names = class_names
             progress = st.progress(0, text="Preparing training run…")
@@ -195,7 +195,7 @@ with tab_evaluate:
         if st.button("Evaluate model", type="primary"):
             try:
                 with st.spinner("Evaluating…"):
-                    _, _, test_loader, class_names = get_loaders(st.session_state.model_dataset or dataset_key, batch_size, train_limit, validation_limit, test_limit, augment, int(seed))
+                    _, _, test_loader, _class_names = get_loaders(st.session_state.model_dataset or dataset_key, batch_size, train_limit, validation_limit, test_limit, augment, int(seed))
                     st.session_state.last_eval = evaluate_classifier(st.session_state.model.to(device), test_loader, device, num_classes=len(st.session_state.class_names))
             except Exception as exc:
                 st.error(f"Evaluation failed: {exc}")
@@ -266,7 +266,7 @@ with tab_predict:
             if st.session_state.model is None:
                 st.info("Train a model or load a checkpoint first.")
             elif st.button("Classify image", type="primary"):
-                tensor = prepare_image(image).to(device)
+                tensor = prepare_image(image, st.session_state.model_dataset or dataset_key).to(device)
                 model = st.session_state.model
                 model.eval()
                 with torch.inference_mode():
