@@ -6,7 +6,7 @@ An interactive image-classification workbench built with **PyTorch** and **Strea
 
 ## Features
 
-- **Streaming data:** examples are read from Hugging Face Datasets as batches are iterated. The full CIFAR archive is not downloaded and stored on your Mac.
+- **Streaming data:** examples are read from Hugging Face Datasets as batches are iterated. The full CIFAR archive is not downloaded and stored on your machine.
 - **CIFAR-10 and CIFAR-100:** choose a 10-class or 100-class recognition task.
 - **Apple Silicon friendly:** automatic CUDA, Apple MPS, and CPU device selection.
 - **Controlled experiments:** epochs, batch size, learning rate, random seed, sample limits, and augmentation.
