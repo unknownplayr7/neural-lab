@@ -47,8 +47,8 @@ def test_checkpoint_round_trip(tmp_path: Path):
 
 def test_checkpoint_rejects_unexpected_payload(tmp_path: Path):
     path = tmp_path / "bad.pt"
-    torch.save({"not_model": {}}, path)
-    with pytest.raises(ValueError, match="architecture"):
+    torch.save({"format_version": 1, "architecture": "CifarCNN"}, path)
+    with pytest.raises(ValueError, match="model_state_dict"):
         load_checkpoint(path, CifarCNN())
 
 
@@ -74,7 +74,7 @@ def test_checkpoint_preserves_optimizer_state_and_history(tmp_path: Path):
 
 def test_checkpoint_loader_rejects_unknown_architecture(tmp_path: Path):
     path = tmp_path / "unknown.pt"
-    torch.save({"architecture": "UnknownNet", "model_state_dict": {}}, path)
+    torch.save({"format_version": 1, "architecture": "UnknownNet", "model_state_dict": {}}, path)
     with pytest.raises(ValueError, match="architecture"):
         load_checkpoint(path, CifarCNN())
 
@@ -95,3 +95,36 @@ def test_checkpoint_loader_never_executes_pickle_payload(tmp_path: Path):
     with pytest.raises(Exception):
         load_checkpoint(path, CifarCNN())
     assert not marker.exists()
+
+
+
+def test_checkpoint_rejects_unsupported_format_version(tmp_path: Path):
+    path = save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    payload = torch.load(path, weights_only=True)
+    payload["format_version"] = 99
+    torch.save(payload, path)
+    with pytest.raises(ValueError, match="format_version"):
+        load_checkpoint(path, CifarCNN())
+
+
+@pytest.mark.parametrize("field,value,message", [
+    ("epoch", -1, "epoch"),
+    ("class_names", ["one"], "class_names"),
+    ("history", {"epoch": 1}, "history"),
+    ("run_config", [], "run_config"),
+    ("optimizer_state_dict", [], "optimizer_state_dict"),
+    ("accuracy", 1.5, "accuracy"),
+])
+def test_checkpoint_rejects_malformed_metadata(tmp_path: Path, field, value, message):
+    path = save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    payload = torch.load(path, weights_only=True)
+    payload[field] = value
+    torch.save(payload, path)
+    with pytest.raises(ValueError, match=message):
+        load_checkpoint(path, CifarCNN())
+
+
+def test_checkpoint_rejects_class_count_mismatch(tmp_path: Path):
+    path = save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    with pytest.raises(ValueError, match="class count"):
+        load_checkpoint(path, CifarCNN(num_classes=100))
