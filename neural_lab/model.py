@@ -129,14 +129,84 @@ def save_checkpoint(
     return target
 
 
-def load_checkpoint(path: str | Path, model: CifarCNN, map_location: str | torch.device = "cpu") -> dict[str, Any]:
-    """Load a checkpoint with weights-only deserialization when supported."""
-    # Never fall back to pickle deserialization: checkpoints are untrusted input.
-    payload = torch.load(path, map_location=map_location, weights_only=True)
-    if not isinstance(payload, dict) or payload.get("architecture") != "CifarCNN":
+def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
+    """Validate checkpoint metadata before model or optimizer state is restored."""
+    if not isinstance(payload, dict):
+        raise ValueError("Checkpoint must contain a mapping")
+    if payload.get("format_version") != 1:
+        raise ValueError("Unsupported checkpoint format_version; expected 1")
+    if payload.get("architecture") != "CifarCNN":
         raise ValueError("Unsupported checkpoint architecture")
     state = payload.get("model_state_dict")
-    if not isinstance(state, dict):
-        raise ValueError("Checkpoint model_state_dict must be a mapping")
-    model.load_state_dict(state, strict=True)
+    if not isinstance(state, dict) or not state:
+        raise ValueError("Checkpoint model_state_dict must be a non-empty mapping")
+    if not all(isinstance(key, str) and torch.is_tensor(value) for key, value in state.items()):
+        raise ValueError("Checkpoint model_state_dict must map string keys to tensors")
+
+    epoch = payload.get("epoch")
+    if isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < 0:
+        raise ValueError("Checkpoint epoch must be a non-negative integer")
+    classes = payload.get("class_names")
+    if not isinstance(classes, (list, tuple)) or len(classes) not in (10, 100):
+        raise ValueError("Checkpoint class_names must contain 10 or 100 class names")
+    if not all(isinstance(name, str) and name.strip() for name in classes):
+        raise ValueError("Checkpoint class_names must contain non-empty strings")
+
+    accuracy = payload.get("accuracy")
+    if accuracy is not None and (
+        isinstance(accuracy, bool) or not isinstance(accuracy, (int, float))
+        or not torch.isfinite(torch.tensor(float(accuracy))).item()
+        or not 0.0 <= float(accuracy) <= 1.0
+    ):
+        raise ValueError("Checkpoint accuracy must be between 0 and 1")
+
+    history = payload.get("history", [])
+    if not isinstance(history, list):
+        raise ValueError("Checkpoint history must be a list")
+    for index, row in enumerate(history):
+        if not isinstance(row, dict):
+            raise ValueError(f"Checkpoint history entry {index} must be a mapping")
+        for key, value in row.items():
+            if not isinstance(key, str) or isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"Checkpoint history entry {index} contains an invalid value")
+            if not torch.isfinite(torch.tensor(float(value))).item():
+                raise ValueError(f"Checkpoint history entry {index} contains a non-finite value")
+
+    config = payload.get("run_config", {})
+    if not isinstance(config, dict):
+        raise ValueError("Checkpoint run_config must be a mapping")
+    expected_types = {
+        "dataset_name": str, "batch_size": int, "train_limit": int,
+        "validation_limit": int, "test_limit": int, "augment": bool,
+        "seed": int, "learning_rate": (int, float),
+    }
+    for key, value in config.items():
+        expected = expected_types.get(key)
+        if expected is None:
+            raise ValueError(f"Checkpoint run_config contains unknown field {key!r}")
+        if (isinstance(value, bool) and expected is not bool) or not isinstance(value, expected):
+            raise ValueError(f"Checkpoint run_config field {key!r} has an invalid type")
+    if config.get("dataset_name", "cifar10") not in {"cifar10", "cifar100"}:
+        raise ValueError("Checkpoint run_config dataset_name is unsupported")
+    for key in ("batch_size", "train_limit", "validation_limit", "test_limit"):
+        if key in config and config[key] < 1:
+            raise ValueError(f"Checkpoint run_config field {key!r} must be positive")
+    if "seed" in config and config["seed"] < 0:
+        raise ValueError("Checkpoint run_config seed cannot be negative")
+    if "learning_rate" in config and config["learning_rate"] <= 0:
+        raise ValueError("Checkpoint run_config learning_rate must be positive")
+
+    optimizer_state = payload.get("optimizer_state_dict")
+    if optimizer_state is not None and not isinstance(optimizer_state, dict):
+        raise ValueError("Checkpoint optimizer_state_dict must be a mapping or null")
+    return payload
+
+
+def load_checkpoint(path: str | Path, model: CifarCNN, map_location: str | torch.device = "cpu") -> dict[str, Any]:
+    """Load and validate a checkpoint using weights-only deserialization."""
+    payload = torch.load(path, map_location=map_location, weights_only=True)
+    validate_checkpoint_payload(payload)
+    if len(payload["class_names"]) != model.classifier[-1].out_features:
+        raise ValueError("Checkpoint class count does not match the model")
+    model.load_state_dict(payload["model_state_dict"], strict=True)
     return payload
