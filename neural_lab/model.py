@@ -137,11 +137,12 @@ def save_checkpoint(
 
 def load_checkpoint(path: str | Path, model: CifarCNN, map_location: str | torch.device = "cpu") -> dict[str, Any]:
     """Load a checkpoint with weights-only deserialization when supported."""
-    try:
-        payload = torch.load(path, map_location=map_location, weights_only=True)
-    except TypeError:  # Compatibility with older supported PyTorch releases.
-        payload = torch.load(path, map_location=map_location)
-    if not isinstance(payload, dict) or "model_state_dict" not in payload:
-        raise ValueError("Not a Neural Lab checkpoint: model_state_dict is missing")
-    model.load_state_dict(payload["model_state_dict"])
+    # Never fall back to pickle deserialization: checkpoints are untrusted input.
+    payload = torch.load(path, map_location=map_location, weights_only=True)
+    if not isinstance(payload, dict) or payload.get("architecture") != "CifarCNN":
+        raise ValueError("Unsupported checkpoint architecture")
+    state = payload.get("model_state_dict")
+    if not isinstance(state, dict):
+        raise ValueError("Checkpoint model_state_dict must be a mapping")
+    model.load_state_dict(state, strict=True)
     return payload
