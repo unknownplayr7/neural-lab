@@ -110,6 +110,8 @@ def save_checkpoint(
     optimizer: torch.optim.Optimizer | None = None,
     history: list[dict[str, float]] | None = None,
     run_config: dict[str, Any] | None = None,
+    scheduler: Any | None = None,
+    early_stopping_state: dict[str, Any] | None = None,
 ) -> Path:
     """Save weights plus small, explicit metadata."""
     target = Path(path)
@@ -124,6 +126,8 @@ def save_checkpoint(
         "history": history or [],
         "run_config": run_config or {},
         "optimizer_state_dict": _cpu_tree(optimizer.state_dict()) if optimizer is not None else None,
+        "scheduler_state_dict": _cpu_tree(scheduler.state_dict()) if scheduler is not None else None,
+        "early_stopping_state": dict(early_stopping_state or {}),
     }
     torch.save(payload, target)
     return target
@@ -180,6 +184,9 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
         "dataset_name": str, "batch_size": int, "train_limit": int,
         "validation_limit": int, "test_limit": int, "augment": bool,
         "seed": int, "learning_rate": (int, float),
+        "scheduler_enabled": bool, "scheduler_patience": int,
+        "scheduler_factor": (int, float), "early_stopping_enabled": bool,
+        "early_stopping_patience": int,
     }
     for key, value in config.items():
         expected = expected_types.get(key)
@@ -196,7 +203,26 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
         raise ValueError("Checkpoint run_config seed cannot be negative")
     if "learning_rate" in config and config["learning_rate"] <= 0:
         raise ValueError("Checkpoint run_config learning_rate must be positive")
+    for key in ("scheduler_patience", "early_stopping_patience"):
+        if key in config and config[key] < 1:
+            raise ValueError(f"Checkpoint run_config field {key!r} must be positive")
+    if "scheduler_factor" in config and not 0.0 < config["scheduler_factor"] < 1.0:
+        raise ValueError("Checkpoint run_config scheduler_factor must be between 0 and 1")
 
+    scheduler_state = payload.get("scheduler_state_dict")
+    if scheduler_state is not None and not isinstance(scheduler_state, dict):
+        raise ValueError("Checkpoint scheduler_state_dict must be a mapping or null")
+    early_state = payload.get("early_stopping_state", {})
+    if not isinstance(early_state, dict):
+        raise ValueError("Checkpoint early_stopping_state must be a mapping")
+    if early_state:
+        best_loss = early_state.get("best_loss")
+        bad_epochs = early_state.get("bad_epochs")
+        stopped = early_state.get("stopped")
+        if (isinstance(best_loss, bool) or not isinstance(best_loss, (int, float))
+                or isinstance(bad_epochs, bool) or not isinstance(bad_epochs, int) or bad_epochs < 0
+                or not isinstance(stopped, bool)):
+            raise ValueError("Checkpoint early_stopping_state is malformed")
     optimizer_state = payload.get("optimizer_state_dict")
     if optimizer_state is not None:
         if not isinstance(optimizer_state, dict):
