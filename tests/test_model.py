@@ -74,7 +74,7 @@ def test_checkpoint_preserves_optimizer_state_and_history(tmp_path: Path):
 
 def test_checkpoint_loader_rejects_unknown_architecture(tmp_path: Path):
     path = tmp_path / "unknown.pt"
-    torch.save({"architecture": "UnknownNet", "model_state_dict": {}}, path)
+    torch.save({"format_version": 1, "architecture": "UnknownNet", "model_state_dict": {}}, path)
     with pytest.raises(ValueError, match="architecture"):
         load_checkpoint(path, CifarCNN())
 
