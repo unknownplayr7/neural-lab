@@ -26,6 +26,18 @@ DATASET_SPECS = {
 }
 
 
+def evaluation_loader_config(run_config: dict[str, Any]) -> dict[str, Any]:
+    """Return the original run's loader settings for consistent held-out evaluation."""
+    keys = (
+        "dataset_name", "batch_size", "train_limit", "validation_limit",
+        "test_limit", "augment", "seed",
+    )
+    missing = [key for key in keys if key not in run_config]
+    if missing:
+        raise ValueError("Experiment configuration is missing: " + ", ".join(missing))
+    return {key: run_config[key] for key in keys}
+
+
 def dataset_stats(dataset_name: str) -> tuple[tuple[float, ...], tuple[float, ...]]:
     if dataset_name == "cifar100":
         return CIFAR100_MEAN, CIFAR100_STD
