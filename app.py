@@ -392,10 +392,10 @@ with tab_evaluate:
                 optimizer, mode="min", factor=float(saved_config.get("scheduler_factor", 0.5)),
                 patience=int(saved_config.get("scheduler_patience", 2)),
             ) if saved_config.get("scheduler_enabled", False) else None
-            if scheduler is not None and scheduler_state is not None:
-                scheduler.load_state_dict(scheduler_state)
             if optimizer_state is not None:
                 optimizer.load_state_dict(optimizer_state)
+            if scheduler is not None and scheduler_state is not None:
+                scheduler.load_state_dict(scheduler_state)
                 restored_epoch = int(payload.get("epoch", 0))
                 restored_history = payload.get("history", [])
             else:
