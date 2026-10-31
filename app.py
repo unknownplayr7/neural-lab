@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import platform
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,7 +15,10 @@ from neural_lab.data import dataset_stats, make_loaders
 from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything
 
-st.set_page_config(page_title="Neural Lab", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="Neural Lab", layout="wide")
+if platform.system() != "Darwin":
+    st.error("Neural Lab currently supports macOS only.")
+    st.stop()
 st.markdown("""
 <style>
 .block-container {max-width: 1400px; padding-top: 1.8rem; padding-bottom: 3rem;}
@@ -24,7 +28,7 @@ st.markdown("""
 div[data-testid="stMetric"] {border: 1px solid rgba(128,128,128,.22); padding: .8rem 1rem; border-radius: 12px;}
 </style>
 <div class="hero">
-  <h1>🧠 Neural Lab</h1>
+  <h1>Neural Lab</h1>
   <p>Train it. Watch it learn. Find out where it gets confused.</p>
   <p class="muted">A hands-on CIFAR-10 image-classification workbench powered by PyTorch.</p>
 </div>
@@ -50,8 +54,6 @@ if "run_config" not in st.session_state:
 
 def device_options() -> list[str]:
     options = ["auto", "cpu"]
-    if torch.cuda.is_available():
-        options.append("cuda")
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         options.append("mps")
     return options
@@ -107,7 +109,7 @@ with st.sidebar:
     st.header("Experiment setup")
     dataset_choice = st.selectbox("Dataset", ["CIFAR-10", "CIFAR-100"], index=0)
     dataset_key = "cifar100" if dataset_choice == "CIFAR-100" else "cifar10"
-    device_choice = st.selectbox("Compute device", device_options(), index=0, help="Auto prefers CUDA, then Apple Silicon MPS, then CPU.")
+    device_choice = st.selectbox("Compute device", device_options(), index=0, help="Auto prefers Apple Silicon MPS, then CPU.")
     epochs = st.slider("Epochs", min_value=1, max_value=30, value=5)
     batch_size = st.select_slider("Batch size", options=[16, 32, 64, 128, 256], value=64)
     learning_rate = st.select_slider("Learning rate", options=[0.0001, 0.0003, 0.001, 0.003, 0.01], value=0.001, format_func=lambda x: f"{x:g}")
@@ -116,7 +118,7 @@ with st.sidebar:
     test_limit = st.select_slider("Held-out test examples", options=[1000, 2500, 5000, 10000], value=5000)
     seed = st.number_input("Random seed", min_value=0, max_value=2_147_483_647, value=42, step=1)
     augment = st.toggle("Random crop + flip augmentation", value=True)
-    st.caption("Images stream from Hugging Face as needed; the full dataset is not downloaded to your Mac.")
+    st.caption("Designed for macOS. Images stream from Hugging Face as needed; full dataset archives are not downloaded.")
 
 try:
     device = available_device(device_choice)
@@ -124,7 +126,7 @@ except RuntimeError as exc:
     st.error(str(exc))
     st.stop()
 
-tab_train, tab_evaluate, tab_predict, tab_about = st.tabs(["🚀 Train", "📊 Evaluate", "🖼️ Predict", "🔬 Model & notes"])
+tab_train, tab_evaluate, tab_predict, tab_about = st.tabs(["Train", "Evaluate", "Predict", "Model & notes"])
 
 with tab_train:
     st.subheader("Train a convolutional neural network")
