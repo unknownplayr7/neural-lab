@@ -325,15 +325,16 @@ with tab_evaluate:
     uploaded_checkpoint = st.file_uploader("Checkpoint (.pt or .pth)", type=["pt", "pth"], key="checkpoint-upload")
     if uploaded_checkpoint is not None and st.button("Load checkpoint"):
         try:
-            payload_bytes = io.BytesIO(uploaded_checkpoint.getvalue())
-            try:
-                payload = torch.load(payload_bytes, map_location="cpu", weights_only=True)
-            except TypeError:
-                payload_bytes.seek(0)
-                payload = torch.load(payload_bytes, map_location="cpu")
-            if not isinstance(payload, dict) or "model_state_dict" not in payload:
-                raise ValueError("This file is not a supported Neural Lab checkpoint.")
+            checkpoint_bytes = uploaded_checkpoint.getvalue()
+            if len(checkpoint_bytes) > 25 * 1024 * 1024:
+                raise ValueError("Checkpoint exceeds the 25 MiB upload limit.")
+            payload_bytes = io.BytesIO(checkpoint_bytes)
+            payload = torch.load(payload_bytes, map_location="cpu", weights_only=True)
+            if not isinstance(payload, dict) or payload.get("architecture") != "CifarCNN" or not isinstance(payload.get("model_state_dict"), dict):
+                raise ValueError("This is not a supported Neural Lab checkpoint.")
             checkpoint_classes = tuple(payload.get("class_names", CIFAR10_CLASSES))
+            if len(checkpoint_classes) not in (10, 100) or not all(isinstance(name, str) and name for name in checkpoint_classes):
+                raise ValueError("Checkpoint class metadata is invalid.")
             model = CifarCNN(num_classes=len(checkpoint_classes))
             model.load_state_dict(payload["model_state_dict"])
             model = model.to(device)
@@ -379,7 +380,15 @@ with tab_predict:
     uploaded_image = st.file_uploader("Choose an image", type=["png", "jpg", "jpeg", "webp"], key="image-upload")
     if uploaded_image is not None:
         try:
-            image = Image.open(uploaded_image)
+            image_bytes = uploaded_image.getvalue()
+            if len(image_bytes) > 10 * 1024 * 1024:
+                raise ValueError("Image exceeds the 10 MiB upload limit.")
+            with Image.open(io.BytesIO(image_bytes)) as source_image:
+                source_image.verify()
+            image = Image.open(io.BytesIO(image_bytes))
+            if image.width * image.height > 20_000_000:
+                raise ValueError("Image dimensions exceed the 20-megapixel limit.")
+            image = ImageOps.exif_transpose(image).convert("RGB")
             st.image(image, caption="Uploaded image", width=280)
             if st.session_state.model is None:
                 st.info("Train a model or load a checkpoint first.")
@@ -395,11 +404,12 @@ with tab_predict:
                 st.bar_chart({st.session_state.class_names[int(i)]: float(probabilities[int(i)]) for i in top_indices})
                 st.dataframe([{"Class": st.session_state.class_names[int(i)], "Probability": float(probabilities[int(i)])} for i in top_indices],
                              use_container_width=True, hide_index=True)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, Image.DecompressionBombError) as exc:
             st.error(f"Could not read that image: {exc}")
 
 with tab_about:
     st.subheader("What is being trained?")
+    st.info("Neural Lab is a macOS-only project. Apple Silicon uses MPS acceleration when available; Intel Macs use CPU. Windows and Linux are not supported.")
     st.markdown("""
 **Architecture:** convolution, batch normalization, ReLU blocks, max-pooling, dropout,
 adaptive average pooling, and a linear output layer sized to the selected dataset.
@@ -414,7 +424,7 @@ Training augmentation uses random crop and horizontal flip. CIFAR-10 and CIFAR-1
 - **Loss** measures confidence-weighted classification error. Lower is generally better.
 
 ### Device notes
-Auto-selection prefers NVIDIA CUDA, then Apple Silicon MPS, then CPU. MPS speed and behavior depend on installed PyTorch/macOS versions; CPU is the fallback.
+Auto-selection prefers Apple Silicon MPS, then CPU. MPS speed and behavior depend on installed PyTorch/macOS versions; CPU is the fallback.
 """)
     st.code("Input:  N × 3 × 32 × 32\nOutput: N × class_count logits", language="text")
     st.caption("Neural Lab is an educational experiment, not a general-purpose object detector.")
