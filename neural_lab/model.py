@@ -18,7 +18,7 @@ CIFAR100_STD = (0.2675, 0.2565, 0.2761)
 
 
 class CifarCNN(nn.Module):
-    """Compact CNN designed for 32x32 RGB CIFAR-10 images.
+    """Compact CNN for 32x32 RGB images from CIFAR-10 or CIFAR-100.
 
     Adaptive pooling makes the classifier independent of the exact spatial
     size after the convolutional feature extractor.
@@ -68,16 +68,12 @@ class CifarCNN(nn.Module):
 
 
 def available_device(preference: str = "auto") -> torch.device:
-    """Resolve auto/cuda/mps/cpu without selecting unavailable accelerators."""
+    """Resolve auto/mps/cpu without selecting unavailable accelerators."""
     preference = preference.lower()
-    if preference not in {"auto", "cpu", "cuda", "mps"}:
-        raise ValueError("preference must be one of: auto, cpu, cuda, mps")
+    if preference not in {"auto", "cpu", "mps"}:
+        raise ValueError("preference must be one of: auto, cpu, mps")
     if preference == "cpu":
         return torch.device("cpu")
-    if preference == "cuda":
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA was requested but is not available")
-        return torch.device("cuda")
     mps_available = bool(
         hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
     )
@@ -85,8 +81,6 @@ def available_device(preference: str = "auto") -> torch.device:
         if not mps_available:
             raise RuntimeError("MPS was requested but is not available")
         return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
     if mps_available:
         return torch.device("mps")
     return torch.device("cpu")
@@ -137,11 +131,12 @@ def save_checkpoint(
 
 def load_checkpoint(path: str | Path, model: CifarCNN, map_location: str | torch.device = "cpu") -> dict[str, Any]:
     """Load a checkpoint with weights-only deserialization when supported."""
-    try:
-        payload = torch.load(path, map_location=map_location, weights_only=True)
-    except TypeError:  # Compatibility with older supported PyTorch releases.
-        payload = torch.load(path, map_location=map_location)
-    if not isinstance(payload, dict) or "model_state_dict" not in payload:
-        raise ValueError("Not a Neural Lab checkpoint: model_state_dict is missing")
-    model.load_state_dict(payload["model_state_dict"])
+    # Never fall back to pickle deserialization: checkpoints are untrusted input.
+    payload = torch.load(path, map_location=map_location, weights_only=True)
+    if not isinstance(payload, dict) or payload.get("architecture") != "CifarCNN":
+        raise ValueError("Unsupported checkpoint architecture")
+    state = payload.get("model_state_dict")
+    if not isinstance(state, dict):
+        raise ValueError("Checkpoint model_state_dict must be a mapping")
+    model.load_state_dict(state, strict=True)
     return payload

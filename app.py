@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import io
+import platform
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,7 +16,10 @@ from neural_lab.data import dataset_stats, make_loaders
 from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything
 
-st.set_page_config(page_title="Neural Lab", page_icon="🧠", layout="wide")
+st.set_page_config(page_title="Neural Lab", layout="wide")
+if platform.system() != "Darwin":
+    st.error("Neural Lab currently supports macOS only.")
+    st.stop()
 st.markdown("""
 <style>
 .block-container {max-width: 1400px; padding-top: 1.8rem; padding-bottom: 3rem;}
@@ -24,9 +29,9 @@ st.markdown("""
 div[data-testid="stMetric"] {border: 1px solid rgba(128,128,128,.22); padding: .8rem 1rem; border-radius: 12px;}
 </style>
 <div class="hero">
-  <h1>🧠 Neural Lab</h1>
+  <h1>Neural Lab</h1>
   <p>Train it. Watch it learn. Find out where it gets confused.</p>
-  <p class="muted">A hands-on CIFAR-10 image-classification workbench powered by PyTorch.</p>
+  <p class="muted">A hands-on CIFAR-10 and CIFAR-100 image-classification workbench powered by PyTorch.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -50,8 +55,6 @@ if "run_config" not in st.session_state:
 
 def device_options() -> list[str]:
     options = ["auto", "cpu"]
-    if torch.cuda.is_available():
-        options.append("cuda")
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         options.append("mps")
     return options
@@ -107,7 +110,7 @@ with st.sidebar:
     st.header("Experiment setup")
     dataset_choice = st.selectbox("Dataset", ["CIFAR-10", "CIFAR-100"], index=0)
     dataset_key = "cifar100" if dataset_choice == "CIFAR-100" else "cifar10"
-    device_choice = st.selectbox("Compute device", device_options(), index=0, help="Auto prefers CUDA, then Apple Silicon MPS, then CPU.")
+    device_choice = st.selectbox("Compute device", device_options(), index=0, help="Auto prefers Apple Silicon MPS, then CPU.")
     epochs = st.slider("Epochs", min_value=1, max_value=30, value=5)
     batch_size = st.select_slider("Batch size", options=[16, 32, 64, 128, 256], value=64)
     learning_rate = st.select_slider("Learning rate", options=[0.0001, 0.0003, 0.001, 0.003, 0.01], value=0.001, format_func=lambda x: f"{x:g}")
@@ -116,7 +119,7 @@ with st.sidebar:
     test_limit = st.select_slider("Held-out test examples", options=[1000, 2500, 5000, 10000], value=5000)
     seed = st.number_input("Random seed", min_value=0, max_value=2_147_483_647, value=42, step=1)
     augment = st.toggle("Random crop + flip augmentation", value=True)
-    st.caption("Images stream from Hugging Face as needed; the full dataset is not downloaded to your Mac.")
+    st.caption("Designed for macOS. Images stream from Hugging Face as needed; full dataset archives are not downloaded.")
 
 try:
     device = available_device(device_choice)
@@ -124,7 +127,7 @@ except RuntimeError as exc:
     st.error(str(exc))
     st.stop()
 
-tab_train, tab_evaluate, tab_predict, tab_about = st.tabs(["🚀 Train", "📊 Evaluate", "🖼️ Predict", "🔬 Model & notes"])
+tab_train, tab_evaluate, tab_predict, tab_about = st.tabs(["Train", "Evaluate", "Predict", "Model & notes"])
 
 with tab_train:
     st.subheader("Train a convolutional neural network")
@@ -233,12 +236,14 @@ with tab_train:
     if st.session_state.model is not None:
         st.divider()
         st.subheader("Save a resumable checkpoint")
-        checkpoint_name = st.text_input("Checkpoint filename", value="checkpoints/cifar-model.pt")
+        checkpoint_name = st.text_input("Checkpoint filename", value="cifar-model.pt", help="Saved inside the local checkpoints folder.")
         if st.button("Save checkpoint", key="save-checkpoint"):
             try:
                 latest = st.session_state.history[-1] if st.session_state.history else {}
+                if Path(checkpoint_name).name != checkpoint_name or Path(checkpoint_name).suffix.lower() not in {".pt", ".pth"}:
+                    raise ValueError("Enter a filename ending in .pt or .pth, without folders.")
                 saved = save_checkpoint(
-                    checkpoint_name, st.session_state.model,
+                    Path("checkpoints") / checkpoint_name, st.session_state.model,
                     epoch=int(st.session_state.current_epoch),
                     accuracy=latest.get("val_accuracy"),
                     class_names=tuple(st.session_state.class_names),
@@ -323,15 +328,16 @@ with tab_evaluate:
     uploaded_checkpoint = st.file_uploader("Checkpoint (.pt or .pth)", type=["pt", "pth"], key="checkpoint-upload")
     if uploaded_checkpoint is not None and st.button("Load checkpoint"):
         try:
-            payload_bytes = io.BytesIO(uploaded_checkpoint.getvalue())
-            try:
-                payload = torch.load(payload_bytes, map_location="cpu", weights_only=True)
-            except TypeError:
-                payload_bytes.seek(0)
-                payload = torch.load(payload_bytes, map_location="cpu")
-            if not isinstance(payload, dict) or "model_state_dict" not in payload:
-                raise ValueError("This file is not a supported Neural Lab checkpoint.")
+            checkpoint_bytes = uploaded_checkpoint.getvalue()
+            if len(checkpoint_bytes) > 25 * 1024 * 1024:
+                raise ValueError("Checkpoint exceeds the 25 MiB upload limit.")
+            payload_bytes = io.BytesIO(checkpoint_bytes)
+            payload = torch.load(payload_bytes, map_location="cpu", weights_only=True)
+            if not isinstance(payload, dict) or payload.get("architecture") != "CifarCNN" or not isinstance(payload.get("model_state_dict"), dict):
+                raise ValueError("This is not a supported Neural Lab checkpoint.")
             checkpoint_classes = tuple(payload.get("class_names", CIFAR10_CLASSES))
+            if len(checkpoint_classes) not in (10, 100) or not all(isinstance(name, str) and name for name in checkpoint_classes):
+                raise ValueError("Checkpoint class metadata is invalid.")
             model = CifarCNN(num_classes=len(checkpoint_classes))
             model.load_state_dict(payload["model_state_dict"])
             model = model.to(device)
@@ -377,7 +383,15 @@ with tab_predict:
     uploaded_image = st.file_uploader("Choose an image", type=["png", "jpg", "jpeg", "webp"], key="image-upload")
     if uploaded_image is not None:
         try:
-            image = Image.open(uploaded_image)
+            image_bytes = uploaded_image.getvalue()
+            if len(image_bytes) > 10 * 1024 * 1024:
+                raise ValueError("Image exceeds the 10 MiB upload limit.")
+            with Image.open(io.BytesIO(image_bytes)) as source_image:
+                source_image.verify()
+            image = Image.open(io.BytesIO(image_bytes))
+            if image.width * image.height > 20_000_000:
+                raise ValueError("Image dimensions exceed the 20-megapixel limit.")
+            image = ImageOps.exif_transpose(image).convert("RGB")
             st.image(image, caption="Uploaded image", width=280)
             if st.session_state.model is None:
                 st.info("Train a model or load a checkpoint first.")
@@ -393,11 +407,13 @@ with tab_predict:
                 st.bar_chart({st.session_state.class_names[int(i)]: float(probabilities[int(i)]) for i in top_indices})
                 st.dataframe([{"Class": st.session_state.class_names[int(i)], "Probability": float(probabilities[int(i)])} for i in top_indices],
                              use_container_width=True, hide_index=True)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, Image.DecompressionBombError) as exc:
             st.error(f"Could not read that image: {exc}")
 
 with tab_about:
     st.subheader("What is being trained?")
+    st.info("Neural Lab is maintained for macOS only. Apple Silicon uses MPS acceleration when available; Intel Macs use CPU. Windows and Linux are not supported.")
+    st.info("Neural Lab is a macOS-only project. Apple Silicon uses MPS acceleration when available; Intel Macs use CPU. Windows and Linux are not supported.")
     st.markdown("""
 **Architecture:** convolution, batch normalization, ReLU blocks, max-pooling, dropout,
 adaptive average pooling, and a linear output layer sized to the selected dataset.
@@ -412,7 +428,7 @@ Training augmentation uses random crop and horizontal flip. CIFAR-10 and CIFAR-1
 - **Loss** measures confidence-weighted classification error. Lower is generally better.
 
 ### Device notes
-Auto-selection prefers NVIDIA CUDA, then Apple Silicon MPS, then CPU. MPS speed and behavior depend on installed PyTorch/macOS versions; CPU is the fallback.
+Auto-selection prefers Apple Silicon MPS, then CPU. MPS speed and behavior depend on installed PyTorch/macOS versions; CPU is the fallback.
 """)
     st.code("Input:  N × 3 × 32 × 32\nOutput: N × class_count logits", language="text")
     st.caption("Neural Lab is an educational experiment, not a general-purpose object detector.")

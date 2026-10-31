@@ -1,5 +1,7 @@
 # Contributing
 
+Neural Lab is a macOS-only project. Please develop and test changes on macOS; Apple Silicon testing is preferred for MPS-related changes. Windows and Linux support are out of scope.
+
 Thanks for helping improve Neural Lab.
 
 ## Local setup
