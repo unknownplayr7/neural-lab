@@ -11,7 +11,8 @@ This project intentionally targets macOS. It is not advertised as cross-platform
 - Inspect batch progress, training and validation metrics, learning curves, confusion matrices, per-class accuracy, and representative mistakes.
 - Evaluate against a separate held-out test split.
 - Upload an image and inspect the model's top class probabilities.
-- Save and resume checkpoints containing model weights, optimizer state, metric history, and experiment settings.
+- Save and resume checkpoints containing model weights, optimizer and scheduler state, early-stopping progress, metric history, and experiment settings.
+- Reduce the learning rate automatically when validation loss plateaus, and optionally stop training after a configurable patience window.
 
 **Scope:** this is an educational classifier, not a general-purpose object detector. It predicts only among the selected dataset's classes. An uploaded photo outside those classes may receive a confident but incorrect prediction.
 
@@ -46,9 +47,10 @@ Open the local address printed by Streamlit in your browser. The first run needs
 1. Select CIFAR-10.
 2. Start with 5 epochs and 10,000 training examples.
 3. Use batch size 64 and the default learning rate.
-4. Train one epoch at a time and inspect the learning curves.
-5. Evaluate after training; avoid repeatedly tuning against the held-out test subset.
-6. Save a checkpoint before changing experiment settings.
+4. Leave the plateau scheduler enabled to reduce the learning rate when validation loss stalls. Enable early stopping when you want a run to stop after several non-improving epochs.
+5. Train one epoch at a time and inspect the learning curves and recorded learning rates.
+6. Evaluate after training; avoid repeatedly tuning against the held-out test subset.
+7. Save a checkpoint before changing experiment settings.
 
 CIFAR-100 is a more difficult 100-class task and may require more training time and tuning.
 
