@@ -7,6 +7,7 @@ from PIL import Image
 
 from neural_lab.data import HuggingFaceImageStream, evaluation_loader_config
 from neural_lab.model import CifarCNN, load_checkpoint, save_checkpoint
+from neural_lab.training import update_early_stopping
 
 
 class _FakeIterableStream:
@@ -138,3 +139,51 @@ def test_stream_rejects_invalid_limits_and_non_image_records():
     )
     with pytest.raises(TypeError, match="PIL image"):
         list(dataset)
+
+
+
+def test_early_stopping_tracks_improvement_and_patience():
+    state = update_early_stopping(None, 1.0, patience=2)
+    assert state == {"best_loss": 1.0, "bad_epochs": 0, "stopped": False}
+    state = update_early_stopping(state, 1.1, patience=2)
+    assert state["bad_epochs"] == 1
+    assert state["stopped"] is False
+    state = update_early_stopping(state, 1.2, patience=2)
+    assert state["stopped"] is True
+    assert state["best_loss"] == 1.0
+
+
+def test_early_stopping_resets_patience_after_improvement():
+    state = update_early_stopping(None, 1.0, patience=2)
+    state = update_early_stopping(state, 1.1, patience=2)
+    state = update_early_stopping(state, 0.9, patience=2)
+    assert state["best_loss"] == 0.9
+    assert state["bad_epochs"] == 0
+    assert state["stopped"] is False
+
+
+def test_early_stopping_rejects_invalid_parameters_and_metrics():
+    with pytest.raises(ValueError, match="patience"):
+        update_early_stopping(None, 1.0, patience=0)
+    with pytest.raises(ValueError, match="finite"):
+        update_early_stopping(None, float("nan"), patience=2)
+
+
+def test_checkpoint_restores_scheduler_and_early_stopping_state(tmp_path: Path):
+    model = CifarCNN()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=1)
+    scheduler.step(1.0)
+    early_state = {"best_loss": 1.0, "bad_epochs": 1, "stopped": False}
+    path = save_checkpoint(
+        tmp_path / "training-state.pt", model, epoch=2, optimizer=optimizer,
+        scheduler=scheduler, early_stopping_state=early_state,
+    )
+    restored = CifarCNN()
+    payload = load_checkpoint(path, restored)
+    restored_optimizer = torch.optim.AdamW(restored.parameters(), lr=1e-3)
+    restored_optimizer.load_state_dict(payload["optimizer_state_dict"])
+    restored_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(restored_optimizer, patience=1)
+    restored_scheduler.load_state_dict(payload["scheduler_state_dict"])
+    assert payload["early_stopping_state"] == early_state
+    assert restored_scheduler.state_dict() == scheduler.state_dict()

@@ -105,6 +105,32 @@ def train_model(
 
 
 
+
+def update_early_stopping(
+    state: dict[str, float | int | bool] | None,
+    validation_loss: float,
+    *,
+    patience: int,
+    min_delta: float = 0.0,
+) -> dict[str, float | int | bool]:
+    """Update validation-loss early-stopping state; patience counts non-improving epochs."""
+    if patience < 1:
+        raise ValueError("patience must be positive")
+    if min_delta < 0:
+        raise ValueError("min_delta cannot be negative")
+    if not np.isfinite(validation_loss):
+        raise ValueError("validation_loss must be finite")
+    current = dict(state or {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False})
+    best = float(current.get("best_loss", float("inf")))
+    bad_epochs = int(current.get("bad_epochs", 0))
+    if validation_loss < best - min_delta:
+        best = float(validation_loss)
+        bad_epochs = 0
+    else:
+        bad_epochs += 1
+    stopped = bool(current.get("stopped", False)) or bad_epochs >= patience
+    return {"best_loss": best, "bad_epochs": bad_epochs, "stopped": stopped}
+
 def evaluate_classifier(
     model: nn.Module,
     loader: DataLoader,

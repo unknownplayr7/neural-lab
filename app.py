@@ -14,7 +14,7 @@ from torch import nn
 
 from neural_lab.data import dataset_stats, evaluation_loader_config, make_loaders
 from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint, validate_checkpoint_payload
-from neural_lab.training import evaluate_classifier, run_epoch, seed_everything
+from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, update_early_stopping
 
 st.set_page_config(page_title="Neural Lab", layout="wide")
 if platform.system() != "Darwin":
@@ -51,6 +51,10 @@ if "current_epoch" not in st.session_state:
     st.session_state.current_epoch = 0
 if "run_config" not in st.session_state:
     st.session_state.run_config = None
+if "scheduler" not in st.session_state:
+    st.session_state.scheduler = None
+if "early_stopping_state" not in st.session_state:
+    st.session_state.early_stopping_state = {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}
 
 
 def device_options() -> list[str]:
@@ -119,6 +123,12 @@ with st.sidebar:
     test_limit = st.select_slider("Held-out test examples", options=[1000, 2500, 5000, 10000], value=5000)
     seed = st.number_input("Random seed", min_value=0, max_value=2_147_483_647, value=42, step=1)
     augment = st.toggle("Random crop + flip augmentation", value=True)
+    st.subheader("Training controls")
+    scheduler_enabled = st.toggle("Reduce learning rate when validation stalls", value=True)
+    scheduler_patience = st.slider("Scheduler patience (epochs)", 1, 8, 2, disabled=not scheduler_enabled)
+    scheduler_factor = st.slider("Learning-rate reduction factor", 0.1, 0.9, 0.5, 0.1, disabled=not scheduler_enabled)
+    early_stopping_enabled = st.toggle("Stop when validation loss stops improving", value=False)
+    early_stopping_patience = st.slider("Early-stopping patience (epochs)", 1, 15, 5, disabled=not early_stopping_enabled)
     st.caption("Designed for macOS. Images stream from Hugging Face as needed; full dataset archives are not downloaded.")
 
 try:
@@ -144,14 +154,22 @@ with tab_train:
             "dataset_name": dataset_key, "batch_size": int(batch_size),
             "train_limit": int(train_limit), "validation_limit": int(validation_limit),
             "test_limit": int(test_limit), "augment": bool(augment), "seed": int(seed),
+            "scheduler_enabled": bool(scheduler_enabled), "scheduler_patience": int(scheduler_patience),
+            "scheduler_factor": float(scheduler_factor), "early_stopping_enabled": bool(early_stopping_enabled),
+            "early_stopping_patience": int(early_stopping_patience),
         }
         try:
             with st.spinner("Connecting to Hugging Face and preparing streaming data…"):
                 _train_loader, _validation_loader, _test_loader, class_names = get_loaders(**config)
             model = CifarCNN(num_classes=len(class_names)).to(device)
             optimizer = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=1e-4)
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=float(scheduler_factor), patience=int(scheduler_patience)
+            ) if scheduler_enabled else None
             st.session_state.model = model
             st.session_state.optimizer = optimizer
+            st.session_state.scheduler = scheduler
+            st.session_state.early_stopping_state = {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}
             st.session_state.class_names = class_names
             st.session_state.model_dataset = dataset_key
             st.session_state.run_config = {**config, "learning_rate": float(learning_rate)}
@@ -169,7 +187,7 @@ with tab_train:
         st.write(f"**Active run:** {st.session_state.model_dataset.upper()} · epoch {st.session_state.current_epoch}/{epochs}")
         if st.session_state.current_epoch >= epochs:
             st.success("Target epoch count reached. Increase the Epochs setting to continue training.")
-        can_train = st.session_state.current_epoch < epochs
+        can_train = st.session_state.current_epoch < epochs and not st.session_state.early_stopping_state.get("stopped", False)
         next_col, all_col = st.columns(2)
         with next_col:
             train_next = st.button("Train next epoch", disabled=not can_train, use_container_width=True, key="train-next")
@@ -206,10 +224,19 @@ with tab_train:
 
                     if hasattr(train_loader.dataset, "set_epoch"):
                         train_loader.dataset.set_epoch(epoch_number - 1)
+                    epoch_learning_rate = float(optimizer.param_groups[0]["lr"])
                     train_metrics = run_epoch(
                         model, train_loader, criterion, device, optimizer=optimizer, on_batch=batch_callback
                     )
                     validation_metrics = run_epoch(model, validation_loader, criterion, device)
+                    if st.session_state.scheduler is not None:
+                        st.session_state.scheduler.step(validation_metrics["loss"])
+                    if config.get("early_stopping_enabled", False):
+                        st.session_state.early_stopping_state = update_early_stopping(
+                            st.session_state.early_stopping_state, validation_metrics["loss"],
+                            patience=int(config["early_stopping_patience"]), min_delta=0.0,
+                        )
+                    next_learning_rate = float(optimizer.param_groups[0]["lr"])
                     record = {
                         "epoch": float(epoch_number),
                         "train_loss": train_metrics["loss"],
@@ -217,10 +244,14 @@ with tab_train:
                         "val_loss": validation_metrics["loss"],
                         "val_accuracy": validation_metrics["accuracy"],
                         "seconds": train_metrics["seconds"],
+                        "learning_rate": epoch_learning_rate,
+                        "next_learning_rate": next_learning_rate,
                     }
                     st.session_state.history = [*st.session_state.history, record]
                     st.session_state.current_epoch = epoch_number
                     progress.progress((step + 1) / total_steps, text=f"Completed epoch {epoch_number}/{epochs}")
+                    if st.session_state.early_stopping_state.get("stopped", False):
+                        record["early_stopped"] = 1.0
                     with live.container():
                         a, b, c, d = st.columns(4)
                         a.metric("Train loss", f"{train_metrics['loss']:.3f}")
@@ -228,8 +259,13 @@ with tab_train:
                         c.metric("Validation loss", f"{validation_metrics['loss']:.3f}")
                         d.metric("Validation accuracy", f"{validation_metrics['accuracy']:.1%}")
                         show_history(st.session_state.history)
+                    if st.session_state.early_stopping_state.get("stopped", False):
+                        break
                 batch_progress.empty()
-                st.success(f"Training paused at epoch {st.session_state.current_epoch}. You can resume with the next epoch.")
+                if st.session_state.early_stopping_state.get("stopped", False):
+                    st.warning(f"Early stopping triggered at epoch {st.session_state.current_epoch}: validation loss did not improve for {config['early_stopping_patience']} epochs.")
+                else:
+                    st.success(f"Training paused at epoch {st.session_state.current_epoch}. You can resume with the next epoch.")
             except Exception as exc:
                 st.error(f"Training failed: {exc}")
                 st.exception(exc)
@@ -252,6 +288,8 @@ with tab_train:
                     optimizer=st.session_state.optimizer,
                     history=st.session_state.history,
                     run_config=st.session_state.run_config,
+                    scheduler=st.session_state.scheduler,
+                    early_stopping_state=st.session_state.early_stopping_state,
                 )
                 st.success(f"Saved resumable checkpoint to {saved}")
             except (OSError, ValueError) as exc:
@@ -348,8 +386,16 @@ with tab_evaluate:
             model_dataset = "cifar100" if len(checkpoint_classes) > 10 else "cifar10"
             optimizer = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=1e-4)
             optimizer_state = payload.get("optimizer_state_dict")
+            scheduler_state = payload.get("scheduler_state_dict")
+            saved_config = payload.get("run_config") or {}
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=float(saved_config.get("scheduler_factor", 0.5)),
+                patience=int(saved_config.get("scheduler_patience", 2)),
+            ) if saved_config.get("scheduler_enabled", False) else None
             if optimizer_state is not None:
                 optimizer.load_state_dict(optimizer_state)
+            if scheduler is not None and scheduler_state is not None:
+                scheduler.load_state_dict(scheduler_state)
                 restored_epoch = int(payload.get("epoch", 0))
                 restored_history = payload.get("history", [])
             else:
@@ -357,11 +403,12 @@ with tab_evaluate:
                 restored_history = []
             st.session_state.model = model
             st.session_state.optimizer = optimizer
+            st.session_state.scheduler = scheduler
+            st.session_state.early_stopping_state = payload.get("early_stopping_state") or {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}
             st.session_state.class_names = checkpoint_classes
             st.session_state.model_dataset = model_dataset
             st.session_state.current_epoch = restored_epoch
             st.session_state.history = restored_history
-            saved_config = payload.get("run_config") or {}
             st.session_state.run_config = {
                 "dataset_name": model_dataset,
                 "batch_size": int(saved_config.get("batch_size", batch_size)),
@@ -371,6 +418,11 @@ with tab_evaluate:
                 "augment": bool(saved_config.get("augment", augment)),
                 "seed": int(saved_config.get("seed", seed)),
                 "learning_rate": float(saved_config.get("learning_rate", learning_rate)),
+                "scheduler_enabled": bool(saved_config.get("scheduler_enabled", False)),
+                "scheduler_patience": int(saved_config.get("scheduler_patience", 2)),
+                "scheduler_factor": float(saved_config.get("scheduler_factor", 0.5)),
+                "early_stopping_enabled": bool(saved_config.get("early_stopping_enabled", False)),
+                "early_stopping_patience": int(saved_config.get("early_stopping_patience", 5)),
             }
             st.session_state.last_eval = None
             if optimizer_state:
