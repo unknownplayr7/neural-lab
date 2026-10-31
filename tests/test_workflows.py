@@ -101,3 +101,19 @@ def test_checkpoint_resume_workflow_restores_weights_optimizer_and_run_config(tm
     assert len(resumed_optimizer.state) > 0
     for key, tensor in model.state_dict().items():
         assert torch.equal(tensor, restored.state_dict()[key])
+
+
+
+def test_stream_rejects_invalid_limits_and_non_image_records():
+    with pytest.raises(ValueError, match="limit"):
+        HuggingFaceImageStream(
+            "fixture", "train", "image", "label", _pixel_value,
+            limit=0, stream_factory=_records,
+        )
+
+    dataset = HuggingFaceImageStream(
+        "fixture", "train", "image", "label", _pixel_value,
+        limit=1, stream_factory=lambda: [{"image": "not-an-image", "label": 0}],
+    )
+    with pytest.raises(TypeError, match="PIL image"):
+        list(dataset)
