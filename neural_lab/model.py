@@ -133,7 +133,8 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
     """Validate checkpoint metadata before model or optimizer state is restored."""
     if not isinstance(payload, dict):
         raise ValueError("Checkpoint must contain a mapping")
-    if payload.get("format_version") != 1:
+    version = payload.get("format_version")
+    if isinstance(version, bool) or not isinstance(version, int) or version != 1:
         raise ValueError("Unsupported checkpoint format_version; expected 1")
     if payload.get("architecture") != "CifarCNN":
         raise ValueError("Unsupported checkpoint architecture")
