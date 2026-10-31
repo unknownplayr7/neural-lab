@@ -13,7 +13,7 @@ from PIL import Image, ImageOps
 from torch import nn
 
 from neural_lab.data import dataset_stats, make_loaders
-from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint
+from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint, validate_checkpoint_payload
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything
 
 st.set_page_config(page_title="Neural Lab", layout="wide")
@@ -204,6 +204,8 @@ with tab_train:
                             text=f"Epoch {epoch_number} · batch {batch_index}/{batch_count} · running loss {rolling_loss:.3f}",
                         )
 
+                    if hasattr(train_loader.dataset, "set_epoch"):
+                        train_loader.dataset.set_epoch(epoch_number - 1)
                     train_metrics = run_epoch(
                         model, train_loader, criterion, device, optimizer=optimizer, on_batch=batch_callback
                     )
@@ -264,7 +266,11 @@ with tab_evaluate:
         if st.button("Evaluate model", type="primary"):
             try:
                 with st.spinner("Evaluating…"):
-                    _, _, test_loader, _class_names = get_loaders(st.session_state.model_dataset or dataset_key, batch_size, train_limit, validation_limit, test_limit, augment, int(seed))
+                    config = st.session_state.run_config
+                    _, _, test_loader, _class_names = get_loaders(
+                        config["dataset_name"], config["batch_size"], config["train_limit"],
+                        config["validation_limit"], config["test_limit"], config["augment"], config["seed"]
+                    )
                     st.session_state.last_eval = evaluate_classifier(st.session_state.model.to(device), test_loader, device, num_classes=len(st.session_state.class_names))
             except Exception as exc:
                 st.error(f"Evaluation failed: {exc}")
@@ -333,18 +339,17 @@ with tab_evaluate:
                 raise ValueError("Checkpoint exceeds the 25 MiB upload limit.")
             payload_bytes = io.BytesIO(checkpoint_bytes)
             payload = torch.load(payload_bytes, map_location="cpu", weights_only=True)
-            if not isinstance(payload, dict) or payload.get("architecture") != "CifarCNN" or not isinstance(payload.get("model_state_dict"), dict):
-                raise ValueError("This is not a supported Neural Lab checkpoint.")
-            checkpoint_classes = tuple(payload.get("class_names", CIFAR10_CLASSES))
+            validate_checkpoint_payload(payload)
+            checkpoint_classes = tuple(payload["class_names"])
             if len(checkpoint_classes) not in (10, 100) or not all(isinstance(name, str) and name for name in checkpoint_classes):
                 raise ValueError("Checkpoint class metadata is invalid.")
             model = CifarCNN(num_classes=len(checkpoint_classes))
-            model.load_state_dict(payload["model_state_dict"])
+            model.load_state_dict(payload["model_state_dict"], strict=True)
             model = model.to(device)
             model_dataset = "cifar100" if len(checkpoint_classes) > 10 else "cifar10"
             optimizer = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=1e-4)
             optimizer_state = payload.get("optimizer_state_dict")
-            if optimizer_state:
+            if optimizer_state is not None:
                 optimizer.load_state_dict(optimizer_state)
                 restored_epoch = int(payload.get("epoch", 0))
                 restored_history = payload.get("history", [])
@@ -412,7 +417,6 @@ with tab_predict:
 
 with tab_about:
     st.subheader("What is being trained?")
-    st.info("Neural Lab is maintained for macOS only. Apple Silicon uses MPS acceleration when available; Intel Macs use CPU. Windows and Linux are not supported.")
     st.info("Neural Lab is a macOS-only project. Apple Silicon uses MPS acceleration when available; Intel Macs use CPU. Windows and Linux are not supported.")
     st.markdown("""
 **Architecture:** convolution, batch normalization, ReLU blocks, max-pooling, dropout,
