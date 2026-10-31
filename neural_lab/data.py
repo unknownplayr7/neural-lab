@@ -9,6 +9,8 @@ from collections.abc import Callable, Iterable, Iterator
 from io import BytesIO
 from typing import Any
 
+import random
+
 import torch
 from PIL import Image
 from torch.utils.data import DataLoader, IterableDataset
@@ -76,6 +78,12 @@ class HuggingFaceImageStream(IterableDataset):
         self.seed = seed
         self.shuffle_buffer = shuffle_buffer
         self.stream_factory = stream_factory
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        if epoch < 0:
+            raise ValueError("epoch cannot be negative")
+        self.epoch = int(epoch)
 
     def __len__(self) -> int:
         return self.limit
@@ -85,17 +93,30 @@ class HuggingFaceImageStream(IterableDataset):
             stream = self.stream_factory()
         else:
             from datasets import load_dataset
-
             stream = load_dataset(self.repo_id, split=self.split, streaming=True)
-        if self.shuffle and hasattr(stream, "shuffle"):
-            stream = stream.shuffle(seed=self.seed, buffer_size=self.shuffle_buffer)
 
-        yielded = 0
-        for index, example in enumerate(stream):
-            if index < self.offset:
-                continue
-            if yielded >= self.limit:
-                break
+        # A fixed base shuffle defines stable, disjoint train/validation windows.
+        # Only the training window is reshuffled with an epoch-aware seed.
+        if hasattr(stream, "shuffle"):
+            stream = stream.shuffle(seed=self.seed, buffer_size=self.shuffle_buffer)
+            if self.shuffle and hasattr(stream, "take"):
+                stream = stream.take(self.limit).shuffle(
+                    seed=self.seed + self.epoch,
+                    buffer_size=min(self.shuffle_buffer, self.limit),
+                )
+            elif hasattr(stream, "skip") and hasattr(stream, "take"):
+                stream = stream.skip(self.offset).take(self.limit)
+            else:
+                stream = list(stream)[self.offset:self.offset + self.limit]
+                if self.shuffle:
+                    random.Random(self.seed + self.epoch).shuffle(stream)
+        else:
+            from itertools import islice
+            stream = list(islice(stream, self.offset, self.offset + self.limit))
+            if self.shuffle:
+                random.Random(self.seed + self.epoch).shuffle(stream)
+
+        for example in stream:
             image = example[self.image_key]
             if isinstance(image, dict):
                 raw = image.get("bytes")
@@ -110,7 +131,6 @@ class HuggingFaceImageStream(IterableDataset):
                 raise TypeError(f"Expected a PIL image, got {type(image).__name__}")
             image = image.convert("RGB")
             yield self.transform(image), int(example[self.label_key])
-            yielded += 1
 
 
 def _dataset_metadata(dataset_name: str) -> tuple[str, str, str, tuple[str, ...]]:
@@ -173,7 +193,7 @@ def make_loaders(
     )
     validation_data = HuggingFaceImageStream(
         repo_id, "train", image_key, label_key, eval_transform,
-        limit=validation_limit, offset=train_limit, shuffle=True, seed=seed,
+        limit=validation_limit, offset=train_limit, shuffle=False, seed=seed,
     )
     test_data = HuggingFaceImageStream(
         repo_id, "test", image_key, label_key, eval_transform,
