@@ -68,16 +68,12 @@ class CifarCNN(nn.Module):
 
 
 def available_device(preference: str = "auto") -> torch.device:
-    """Resolve auto/cuda/mps/cpu without selecting unavailable accelerators."""
+    """Resolve auto/mps/cpu without selecting unavailable accelerators."""
     preference = preference.lower()
-    if preference not in {"auto", "cpu", "cuda", "mps"}:
-        raise ValueError("preference must be one of: auto, cpu, cuda, mps")
+    if preference not in {"auto", "cpu", "mps"}:
+        raise ValueError("preference must be one of: auto, cpu, mps")
     if preference == "cpu":
         return torch.device("cpu")
-    if preference == "cuda":
-        if not torch.cuda.is_available():
-            raise RuntimeError("CUDA was requested but is not available")
-        return torch.device("cuda")
     mps_available = bool(
         hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
     )
@@ -85,8 +81,6 @@ def available_device(preference: str = "auto") -> torch.device:
         if not mps_available:
             raise RuntimeError("MPS was requested but is not available")
         return torch.device("mps")
-    if torch.cuda.is_available():
-        return torch.device("cuda")
     if mps_available:
         return torch.device("mps")
     return torch.device("cpu")
