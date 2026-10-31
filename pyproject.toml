@@ -9,6 +9,18 @@ description = "macOS-only interactive CIFAR image classification workbench"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+classifiers = [
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Education",
+]
+
+[project.urls]
+Homepage = "https://github.com/unknownplayr7/neural-lab"
+Repository = "https://github.com/unknownplayr7/neural-lab"
+Issues = "https://github.com/unknownplayr7/neural-lab/issues"
 
 [tool.setuptools.packages.find]
 include = ["neural_lab*"]
