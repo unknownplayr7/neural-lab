@@ -12,7 +12,7 @@ import torch
 from PIL import Image, ImageOps
 from torch import nn
 
-from neural_lab.data import dataset_stats, make_loaders
+from neural_lab.data import dataset_stats, evaluation_loader_config, make_loaders
 from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint, validate_checkpoint_payload
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything
 
@@ -268,8 +268,7 @@ with tab_evaluate:
                 with st.spinner("Evaluating…"):
                     config = st.session_state.run_config
                     _, _, test_loader, _class_names = get_loaders(
-                        config["dataset_name"], config["batch_size"], config["train_limit"],
-                        config["validation_limit"], config["test_limit"], config["augment"], config["seed"]
+                        **evaluation_loader_config(config)
                     )
                     st.session_state.last_eval = evaluate_classifier(st.session_state.model.to(device), test_loader, device, num_classes=len(st.session_state.class_names))
             except Exception as exc:
