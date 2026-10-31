@@ -46,7 +46,7 @@ def test_checkpoint_round_trip(tmp_path: Path):
 def test_checkpoint_rejects_unexpected_payload(tmp_path: Path):
     path = tmp_path / "bad.pt"
     torch.save({"not_model": {}}, path)
-    with pytest.raises(ValueError, match="model_state_dict"):
+    with pytest.raises(ValueError, match="architecture"):
         load_checkpoint(path, CifarCNN())
 
 
@@ -68,3 +68,10 @@ def test_checkpoint_preserves_optimizer_state_and_history(tmp_path: Path):
     resumed_optimizer = torch.optim.AdamW(restored.parameters(), lr=1e-3)
     resumed_optimizer.load_state_dict(payload["optimizer_state_dict"])
     assert len(resumed_optimizer.state) > 0
+
+
+def test_checkpoint_loader_rejects_unknown_architecture(tmp_path: Path):
+    path = tmp_path / "unknown.pt"
+    torch.save({"architecture": "UnknownNet", "model_state_dict": {}}, path)
+    with pytest.raises(ValueError, match="architecture"):
+        load_checkpoint(path, CifarCNN())
