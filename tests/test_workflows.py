@@ -1,4 +1,5 @@
 from pathlib import Path
+import random
 
 import pytest
 import torch
@@ -8,11 +9,31 @@ from neural_lab.data import HuggingFaceImageStream, evaluation_loader_config
 from neural_lab.model import CifarCNN, load_checkpoint, save_checkpoint
 
 
+class _FakeIterableStream:
+    def __init__(self, rows):
+        self.rows = list(rows)
+
+    def __iter__(self):
+        return iter(self.rows)
+
+    def shuffle(self, seed, buffer_size):
+        rows = list(self.rows)
+        random.Random(seed).shuffle(rows)
+        return _FakeIterableStream(rows)
+
+    def take(self, count):
+        return _FakeIterableStream(self.rows[:count])
+
+    def skip(self, count):
+        return _FakeIterableStream(self.rows[count:])
+
+
 def _records(count=16):
-    return [
+    rows = [
         {"image": Image.new("RGB", (4, 4), (index, index, index)), "label": index % 10}
         for index in range(count)
     ]
+    return _FakeIterableStream(rows)
 
 
 def _pixel_value(image):
