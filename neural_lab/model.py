@@ -197,8 +197,17 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
         raise ValueError("Checkpoint run_config learning_rate must be positive")
 
     optimizer_state = payload.get("optimizer_state_dict")
-    if optimizer_state is not None and not isinstance(optimizer_state, dict):
-        raise ValueError("Checkpoint optimizer_state_dict must be a mapping or null")
+    if optimizer_state is not None:
+        if not isinstance(optimizer_state, dict):
+            raise ValueError("Checkpoint optimizer_state_dict must be a mapping or null")
+        if not isinstance(optimizer_state.get("state"), dict):
+            raise ValueError("Checkpoint optimizer state must contain a state mapping")
+        groups = optimizer_state.get("param_groups")
+        if not isinstance(groups, list) or not all(
+            isinstance(group, dict) and isinstance(group.get("params"), list)
+            for group in groups
+        ):
+            raise ValueError("Checkpoint optimizer state must contain valid parameter groups")
     return payload
 
 
