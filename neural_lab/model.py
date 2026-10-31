@@ -18,7 +18,7 @@ CIFAR100_STD = (0.2675, 0.2565, 0.2761)
 
 
 class CifarCNN(nn.Module):
-    """Compact CNN designed for 32x32 RGB CIFAR-10 images.
+    """Compact CNN for 32x32 RGB images from CIFAR-10 or CIFAR-100.
 
     Adaptive pooling makes the classifier independent of the exact spatial
     size after the convolutional feature extractor.
