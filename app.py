@@ -31,7 +31,7 @@ div[data-testid="stMetric"] {border: 1px solid rgba(128,128,128,.22); padding: .
 <div class="hero">
   <h1>Neural Lab</h1>
   <p>Train it. Watch it learn. Find out where it gets confused.</p>
-  <p class="muted">A hands-on CIFAR-10 image-classification workbench powered by PyTorch.</p>
+  <p class="muted">A hands-on CIFAR-10 and CIFAR-100 image-classification workbench powered by PyTorch.</p>
 </div>
 """, unsafe_allow_html=True)
 
