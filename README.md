@@ -1,77 +1,96 @@
 # Neural Lab
 
-An interactive image-classification workbench built with **PyTorch** and **Streamlit**. Train a CNN from scratch on CIFAR-10 or CIFAR-100, inspect live learning curves, examine misclassifications, evaluate generalization, and try predictions on uploaded images.
+Neural Lab is a public, open-source, **macOS-only** image-classification workbench. It is designed for people learning how convolutional neural networks train, evaluate, and fail. It uses PyTorch and Streamlit, with Apple Silicon acceleration through Metal Performance Shaders (MPS) when available.
 
-> **Scope:** the model predicts among the selected dataset's known classes. Predictions on unrelated images are exploratory, not general-purpose object recognition.
+This project intentionally targets macOS. It is not advertised as cross-platform software and does not include Windows or Linux support.
 
-## Features
+## What it does
 
-- **Streaming data:** examples are read from Hugging Face Datasets as batches are iterated. The full CIFAR archive is not downloaded and stored on your machine.
-- **CIFAR-10 and CIFAR-100:** choose a 10-class or 100-class recognition task.
-- **Apple Silicon friendly:** automatic CUDA, Apple MPS, and CPU device selection.
-- **Controlled experiments:** epochs, batch size, learning rate, random seed, sample limits, and augmentation.
-- **Visible learning:** live batch progress, epoch metrics, train/validation curves, and held-out test metrics.
-- **Evaluation:** confusion matrix and per-class accuracy on a separate test split.
-- **Prediction sandbox:** upload a photo and inspect the top class probabilities.
-- **Pause and resume:** train one epoch at a time or run the remaining epochs; checkpoints preserve optimizer state and metric history.
-- **Error analysis:** inspect a confusion matrix, per-class accuracy, and a gallery of misclassified test images.
-- **Portable checkpoints:** save model weights and metadata, then reload them.
-- **Quality baseline:** reusable training code, tests, and GitHub Actions CI.
+- Train a convolutional neural network from random initialization on CIFAR-10 or CIFAR-100.
+- Stream examples from Hugging Face rather than downloading full dataset archives into a local data directory.
+- Inspect batch progress, training and validation metrics, learning curves, confusion matrices, per-class accuracy, and representative mistakes.
+- Evaluate against a separate held-out test split.
+- Upload an image and inspect the model's top class probabilities.
+- Save and resume checkpoints containing model weights, optimizer state, metric history, and experiment settings.
+
+**Scope:** this is an educational classifier, not a general-purpose object detector. It predicts only among the selected dataset's classes. An uploaded photo outside those classes may receive a confident but incorrect prediction.
+
+## Platform requirements
+
+- macOS 13 or later recommended.
+- Apple Silicon Mac recommended for MPS acceleration. Intel Macs can use CPU mode but will be substantially slower.
+- Python 3.11 recommended.
+- Internet access for streamed dataset examples.
+- Several GB of free memory and storage recommended for dependencies and training.
+
+MPS availability depends on the macOS and PyTorch versions installed. The application falls back to CPU when MPS is unavailable. Neural Lab does not support Windows or Linux.
 
 ## Quick start
 
-Python 3.11 is recommended. On macOS:
+Open Terminal:
 
 ```bash
+git clone https://github.com/unknownplayr7/neural-lab.git
+cd neural-lab
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 streamlit run app.py
 ```
 
-A network connection is required for streamed examples. The Hugging Face dataset library may cache small metadata/configuration files, but Neural Lab does not download the full dataset archive into a local `data/` folder. Streaming can be slower than local cached data, and later epochs may read examples from the remote source again.
+Open the local address printed by Streamlit in your browser. The first run needs internet access to retrieve dataset metadata and stream examples. Hugging Face and its upstream dataset repositories are external services; availability and speed can vary.
 
-## Suggested workflow
+## Suggested first experiment
 
-1. Start with CIFAR-10, 5 epochs, and 10,000 training examples for a quick baseline.
-2. Watch batch progress and the train-versus-validation curves.
-3. Increase the sample cap or switch to CIFAR-100 for a harder 100-class problem.
-4. Use **Evaluate** to inspect the held-out test confusion matrix and per-class accuracy.
-5. Use **Predict** to inspect the top five class scores for an uploaded image.
-6. Save a checkpoint before experimenting with new settings.
+1. Select CIFAR-10.
+2. Start with 5 epochs and 10,000 training examples.
+3. Use batch size 64 and the default learning rate.
+4. Train one epoch at a time and inspect the learning curves.
+5. Evaluate after training; avoid repeatedly tuning against the held-out test subset.
+6. Save a checkpoint before changing experiment settings.
 
-## Tests and development
+CIFAR-100 is a more difficult 100-class task and may require more training time and tuning.
+
+## Development and tests
 
 ```bash
+python -m pip install -r requirements.txt
 python -m pytest
-streamlit run app.py
 ```
 
-GitHub Actions runs tests on Python 3.10, 3.11, and 3.12 for pull requests, pushes to `main`, and manual runs.
+GitHub Actions runs the test suite on macOS. Hosted CI is not a substitute for testing MPS performance on each supported Mac model.
 
 ## Project layout
 
 ```text
-app.py                    Streamlit UI
+app.py                    Streamlit user interface
 neural_lab/model.py       CNN, device selection, checkpoint helpers
 neural_lab/data.py        Hugging Face streaming pipeline and transforms
-neural_lab/training.py    Reusable train/evaluate loops
-tests/                    Unit tests
+neural_lab/training.py    Reusable training and evaluation loops
+tests/                    Automated tests
 .github/workflows/ci.yml  Continuous integration
 ```
 
-## Model and data notes
+## Data and privacy
 
-- The model is trained from random initialization, not a pretrained image classifier.
-- The CNN uses convolutional blocks, batch normalization, ReLU, max pooling, dropout, adaptive average pooling, and a linear class head.
-- Training uses cross-entropy and AdamW. Training augmentation uses random crop and horizontal flip.
-- Training and validation consume disjoint windows from a seeded shuffled training stream. The separate official test split is reserved for final evaluation.
-- Test accuracy is an estimate for the selected test subset. Repeated tuning against it can make it less independent.
-- Uploaded images are converted to RGB, resized to 32×32, and normalized using dataset-specific statistics. High confidence is not proof of correctness for out-of-distribution images.
-- MPS support depends on the installed PyTorch/macOS combination. CPU remains a fallback.
-- Training runs inside the Streamlit process. Closing or refreshing the app may interrupt the run.
-- Only load checkpoints from trusted sources. Neural Lab uses weights-only deserialization when supported by PyTorch.
+- Dataset examples are streamed from Hugging Face while training or evaluating. The dataset library may cache metadata and small files.
+- Uploaded images and checkpoints are processed by the local Streamlit process. They are not intentionally sent to a Neural Lab server because the project has no hosted backend.
+- Do not upload images you do not have permission to use.
+- Checkpoints should come from trusted sources. Neural Lab uses PyTorch weights-only loading and rejects unsupported checkpoint formats.
+- Keep the Streamlit server bound to localhost unless you understand the network exposure and have secured the environment.
+
+## Known limitations
+
+- Training runs in the Streamlit process. Closing the app or interrupting the process stops the current run.
+- Remote streaming can make later epochs slow because examples may be read from the upstream dataset again.
+- CIFAR images are only 32 by 32 pixels. Uploaded photos are resized to this resolution, which discards detail.
+- Confidence scores are not calibrated probabilities of real-world correctness.
+- Performance varies by Mac, memory capacity, PyTorch build, and network performance.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the security policy.
 
 ## License
 
