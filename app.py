@@ -224,6 +224,7 @@ with tab_train:
 
                     if hasattr(train_loader.dataset, "set_epoch"):
                         train_loader.dataset.set_epoch(epoch_number - 1)
+                    epoch_learning_rate = float(optimizer.param_groups[0]["lr"])
                     train_metrics = run_epoch(
                         model, train_loader, criterion, device, optimizer=optimizer, on_batch=batch_callback
                     )
@@ -235,7 +236,7 @@ with tab_train:
                             st.session_state.early_stopping_state, validation_metrics["loss"],
                             patience=int(config["early_stopping_patience"]), min_delta=0.0,
                         )
-                    current_lr = float(optimizer.param_groups[0]["lr"])
+                    next_learning_rate = float(optimizer.param_groups[0]["lr"])
                     record = {
                         "epoch": float(epoch_number),
                         "train_loss": train_metrics["loss"],
@@ -243,13 +244,14 @@ with tab_train:
                         "val_loss": validation_metrics["loss"],
                         "val_accuracy": validation_metrics["accuracy"],
                         "seconds": train_metrics["seconds"],
-                        "learning_rate": current_lr,
+                        "learning_rate": epoch_learning_rate,
+                        "next_learning_rate": next_learning_rate,
                     }
                     st.session_state.history = [*st.session_state.history, record]
                     st.session_state.current_epoch = epoch_number
                     progress.progress((step + 1) / total_steps, text=f"Completed epoch {epoch_number}/{epochs}")
                     if st.session_state.early_stopping_state.get("stopped", False):
-                        record["stop_reason"] = 1.0
+                        record["early_stopped"] = 1.0
                     with live.container():
                         a, b, c, d = st.columns(4)
                         a.metric("Train loss", f"{train_metrics['loss']:.3f}")
