@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import platform
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -235,12 +236,14 @@ with tab_train:
     if st.session_state.model is not None:
         st.divider()
         st.subheader("Save a resumable checkpoint")
-        checkpoint_name = st.text_input("Checkpoint filename", value="checkpoints/cifar-model.pt")
+        checkpoint_name = st.text_input("Checkpoint filename", value="cifar-model.pt", help="Saved inside the local checkpoints folder.")
         if st.button("Save checkpoint", key="save-checkpoint"):
             try:
                 latest = st.session_state.history[-1] if st.session_state.history else {}
+                if Path(checkpoint_name).name != checkpoint_name or Path(checkpoint_name).suffix.lower() not in {".pt", ".pth"}:
+                    raise ValueError("Enter a filename ending in .pt or .pth, without folders.")
                 saved = save_checkpoint(
-                    checkpoint_name, st.session_state.model,
+                    Path("checkpoints") / checkpoint_name, st.session_state.model,
                     epoch=int(st.session_state.current_epoch),
                     accuracy=latest.get("val_accuracy"),
                     class_names=tuple(st.session_state.class_names),
@@ -409,6 +412,7 @@ with tab_predict:
 
 with tab_about:
     st.subheader("What is being trained?")
+    st.info("Neural Lab is maintained for macOS only. Apple Silicon uses MPS acceleration when available; Intel Macs use CPU. Windows and Linux are not supported.")
     st.info("Neural Lab is a macOS-only project. Apple Silicon uses MPS acceleration when available; Intel Macs use CPU. Windows and Linux are not supported.")
     st.markdown("""
 **Architecture:** convolution, batch normalization, ReLU blocks, max-pooling, dropout,
