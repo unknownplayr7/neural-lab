@@ -20,24 +20,46 @@ This project intentionally targets macOS. It is not advertised as cross-platform
 
 - macOS 13 or later recommended.
 - Apple Silicon Mac recommended for MPS acceleration. Intel Macs can use CPU mode but will be substantially slower.
-- Python 3.11 recommended.
+- **Python 3.10 or newer required; Python 3.12 recommended.**
 - Internet access for streamed dataset examples.
 - Several GB of free memory and storage recommended for dependencies and training.
 
-MPS availability depends on the macOS and PyTorch versions installed. The application falls back to CPU when MPS is unavailable. Neural Lab does not support Windows or Linux.
+Some dependencies, including `datasets>=5.0.1`, require Python 3.10 or newer. An older interpreter such as Python 3.9 can cause dependency installation to fail. MPS availability depends on the macOS and PyTorch versions installed. The application falls back to CPU when MPS is unavailable. Neural Lab does not support Windows or Linux.
 
 ## Quick start
 
-Open Terminal:
+Open Terminal and check that Python 3.12 is installed:
+
+```bash
+python3.12 --version
+```
+
+If the command is unavailable, install Python 3.12 first. On macOS with Homebrew:
+
+```bash
+brew install python@3.12
+```
+
+Then create the virtual environment with that exact interpreter:
 
 ```bash
 git clone https://github.com/unknownplayr7/neural-lab.git
 cd neural-lab
-python3 -m venv .venv
+
+python3.12 -m venv .venv
 source .venv/bin/activate
+
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-streamlit run app.py
+```
+
+Verify the environment and dependencies before starting the app:
+
+```bash
+python -c "import sys; assert sys.version_info >= (3, 10), f'Python 3.10+ required, found {sys.version.split()[0]}'; print(f'Python {sys.version.split()[0]}')"
+python -m pip check
+python -m pip show datasets streamlit
+python -m streamlit run app.py
 ```
 
 Open the local address printed by Streamlit in your browser. The first run needs internet access to retrieve dataset metadata and stream examples. Hugging Face and its upstream dataset repositories are external services; availability and speed can vary.
