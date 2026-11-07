@@ -20,11 +20,11 @@ This project intentionally targets macOS. It is not advertised as cross-platform
 
 - macOS 13 or later recommended.
 - Apple Silicon Mac recommended for MPS acceleration. Intel Macs can use CPU mode but will be substantially slower.
-- **Python 3.10 or newer required; Python 3.12 recommended.**
+- **Python 3.11 or newer required; Python 3.12 recommended.**
 - Internet access for streamed dataset examples.
 - Several GB of free memory and storage recommended for dependencies and training.
 
-Some dependencies, including `datasets>=5.0.1`, require Python 3.10 or newer. An older interpreter such as Python 3.9 can cause dependency installation to fail. MPS availability depends on the macOS and PyTorch versions installed. The application falls back to CPU when MPS is unavailable. Neural Lab does not support Windows or Linux.
+Neural Lab declares Python 3.11 as its minimum supported version in `pyproject.toml`. Some dependencies, including `datasets>=5.0.1`, require Python 3.10 or newer, but the project's own requirement is stricter. Using an older interpreter such as Python 3.9 can cause dependency installation to fail. MPS availability depends on the macOS and PyTorch versions installed. The application falls back to CPU when MPS is unavailable. Neural Lab does not support Windows or Linux.
 
 ## Quick start
 
@@ -56,7 +56,7 @@ python -m pip install -r requirements.txt
 Verify the environment and dependencies before starting the app:
 
 ```bash
-python -c "import sys; assert sys.version_info >= (3, 10), f'Python 3.10+ required, found {sys.version.split()[0]}'; print(f'Python {sys.version.split()[0]}')"
+python -c "import sys; assert sys.version_info >= (3, 11), f'Python 3.11+ required, found {sys.version.split()[0]}'; print(f'Python {sys.version.split()[0]}')"
 python -m pip check
 python -m pip show datasets streamlit
 python -m streamlit run app.py
