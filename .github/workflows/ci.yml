@@ -11,6 +11,12 @@ permissions:
   contents: read
 
 jobs:
+  runner-diagnostic:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm hosted runner allocation
+        run: echo "Ubuntu hosted runner allocated successfully."
+
   tests:
     runs-on: macos-14
     strategy:
