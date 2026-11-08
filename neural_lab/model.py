@@ -16,6 +16,12 @@ CIFAR10_STD = (0.2470, 0.2435, 0.2616)
 CIFAR100_MEAN = (0.5071, 0.4867, 0.4408)
 CIFAR100_STD = (0.2675, 0.2565, 0.2761)
 
+RESUMABLE_CONFIG_FIELDS = frozenset({
+    "dataset_name", "batch_size", "train_limit", "validation_limit", "test_limit",
+    "augment", "seed", "learning_rate", "scheduler_enabled", "scheduler_patience",
+    "scheduler_factor", "early_stopping_enabled", "early_stopping_patience",
+})
+
 
 class CifarCNN(nn.Module):
     """Compact CNN for 32x32 RGB images from CIFAR-10 or CIFAR-100.
@@ -156,6 +162,9 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
         raise ValueError("Checkpoint class_names must contain 10 or 100 class names")
     if not all(isinstance(name, str) and name.strip() for name in classes):
         raise ValueError("Checkpoint class_names must contain non-empty strings")
+    normalized_classes = [name.strip().casefold() for name in classes]
+    if len(set(normalized_classes)) != len(normalized_classes):
+        raise ValueError("Checkpoint class_names must be unique")
 
     accuracy = payload.get("accuracy")
     if accuracy is not None and (
@@ -196,6 +205,10 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
             raise ValueError(f"Checkpoint run_config field {key!r} has an invalid type")
     if config.get("dataset_name", "cifar10") not in {"cifar10", "cifar100"}:
         raise ValueError("Checkpoint run_config dataset_name is unsupported")
+    if "dataset_name" in config:
+        expected_class_count = 10 if config["dataset_name"] == "cifar10" else 100
+        if len(classes) != expected_class_count:
+            raise ValueError("Checkpoint dataset_name does not match class count")
     for key in ("batch_size", "train_limit", "validation_limit", "test_limit"):
         if key in config and config[key] < 1:
             raise ValueError(f"Checkpoint run_config field {key!r} must be positive")
@@ -235,7 +248,27 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
             for group in groups
         ):
             raise ValueError("Checkpoint optimizer state must contain valid parameter groups")
+    if optimizer_state is not None and RESUMABLE_CONFIG_FIELDS.issubset(config):
+        if config["scheduler_enabled"] != (scheduler_state is not None):
+            raise ValueError("Checkpoint scheduler metadata does not match scheduler_enabled")
     return payload
+
+
+def checkpoint_is_resumable(payload: dict[str, Any]) -> bool:
+    """Whether a validated checkpoint has enough state to resume training exactly."""
+    config = payload.get("run_config")
+    return (
+        payload.get("optimizer_state_dict") is not None
+        and isinstance(config, dict)
+        and RESUMABLE_CONFIG_FIELDS.issubset(config)
+    )
+
+
+def checkpoint_resume_progress(payload: dict[str, Any]) -> tuple[int, list[dict[str, float]]]:
+    """Return saved progress only when the checkpoint is fully resumable."""
+    if not checkpoint_is_resumable(payload):
+        return 0, []
+    return int(payload["epoch"]), list(payload.get("history", []))
 
 
 def load_checkpoint(path: str | Path, model: CifarCNN, map_location: str | torch.device = "cpu") -> dict[str, Any]:
