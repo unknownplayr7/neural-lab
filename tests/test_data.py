@@ -70,7 +70,12 @@ def test_real_huggingface_iterable_dataset_supports_offset_limit_and_batches():
     )
     batches = list(DataLoader(dataset, batch_size=2))
     labels = torch.cat([batch_labels for _images, batch_labels in batches]).tolist()
-    assert labels == [2, 3, 4]
+    expected = [
+        row["label"]
+        for row in _real_huggingface_stream(records).shuffle(seed=42, buffer_size=10_000).skip(2).take(3)
+    ]
+    assert labels == expected
+    assert len(labels) == 3
     assert [len(batch_labels) for _images, batch_labels in batches] == [2, 1]
 
 
