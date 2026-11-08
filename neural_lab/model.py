@@ -238,6 +238,18 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
     return payload
 
 
+
+def checkpoint_resume_progress(payload: dict[str, Any]) -> tuple[int, list[dict[str, float]]]:
+    """Return saved progress when optimizer state makes a checkpoint resumable.
+
+    Scheduler state is independent: a run with the scheduler disabled still
+    has valid epoch and metric history that must survive a reload.
+    """
+    if payload.get("optimizer_state_dict") is None:
+        return 0, []
+    return int(payload["epoch"]), list(payload.get("history", []))
+
+
 def load_checkpoint(path: str | Path, model: CifarCNN, map_location: str | torch.device = "cpu") -> dict[str, Any]:
     """Load and validate a checkpoint using weights-only deserialization."""
     payload = torch.load(path, map_location=map_location, weights_only=True)
