@@ -128,3 +128,57 @@ def test_checkpoint_rejects_class_count_mismatch(tmp_path: Path):
     path = save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
     with pytest.raises(ValueError, match="class count"):
         load_checkpoint(path, CifarCNN(num_classes=100))
+
+
+
+def test_checkpoint_rejects_duplicate_class_names(tmp_path: Path):
+    path = save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    payload = torch.load(path, weights_only=True)
+    payload["class_names"][1] = payload["class_names"][0].upper()
+    torch.save(payload, path)
+    with pytest.raises(ValueError, match="unique"):
+        load_checkpoint(path, CifarCNN())
+
+
+def test_checkpoint_rejects_dataset_class_count_mismatch(tmp_path: Path):
+    path = save_checkpoint(
+        tmp_path / "valid.pt", CifarCNN(), epoch=0,
+        run_config={"dataset_name": "cifar100"},
+    )
+    with pytest.raises(ValueError, match="dataset_name.*class count"):
+        load_checkpoint(path, CifarCNN())
+
+
+def test_partial_run_config_is_inference_only_not_resumable(tmp_path: Path):
+    from neural_lab.model import checkpoint_is_resumable, checkpoint_resume_progress
+
+    model = CifarCNN()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    path = save_checkpoint(
+        tmp_path / "partial.pt", model, epoch=5, optimizer=optimizer,
+        history=[{"epoch": 5.0}], run_config={"dataset_name": "cifar10"},
+    )
+    payload = torch.load(path, map_location="cpu", weights_only=True)
+    assert checkpoint_is_resumable(payload) is False
+    assert checkpoint_resume_progress(payload) == (0, [])
+
+
+def test_complete_run_config_without_scheduler_is_resumable(tmp_path: Path):
+    from neural_lab.model import checkpoint_is_resumable, checkpoint_resume_progress
+
+    config = {
+        "dataset_name": "cifar10", "batch_size": 16, "train_limit": 1000,
+        "validation_limit": 1000, "test_limit": 1000, "augment": True,
+        "seed": 7, "learning_rate": 0.001, "scheduler_enabled": False,
+        "scheduler_patience": 2, "scheduler_factor": 0.5,
+        "early_stopping_enabled": False, "early_stopping_patience": 5,
+    }
+    model = CifarCNN()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    path = save_checkpoint(
+        tmp_path / "no-scheduler.pt", model, epoch=3, optimizer=optimizer,
+        history=[{"epoch": 1.0}, {"epoch": 2.0}, {"epoch": 3.0}], run_config=config,
+    )
+    payload = load_checkpoint(path, CifarCNN())
+    assert checkpoint_is_resumable(payload) is True
+    assert checkpoint_resume_progress(payload) == (3, payload["history"])

@@ -13,7 +13,7 @@ from PIL import Image, ImageOps
 from torch import nn
 
 from neural_lab.data import dataset_stats, evaluation_loader_config, make_loaders
-from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint, validate_checkpoint_payload
+from neural_lab.model import (CIFAR10_CLASSES, CifarCNN, available_device, checkpoint_is_resumable, checkpoint_resume_progress, save_checkpoint, validate_checkpoint_payload)
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, update_early_stopping
 
 st.set_page_config(page_title="Neural Lab", layout="wide")
@@ -182,7 +182,10 @@ with tab_train:
             st.exception(exc)
 
     if st.session_state.model is None or st.session_state.run_config is None:
-        st.info("Start a new run or load a checkpoint to begin training.")
+        if st.session_state.model is not None:
+            st.info("This checkpoint contains model weights for evaluation and prediction, but not the complete metadata required to resume training. Start a new run or load a fully resumable checkpoint.")
+        else:
+            st.info("Start a new run or load a checkpoint to begin training.")
     else:
         st.write(f"**Active run:** {st.session_state.model_dataset.upper()} · epoch {st.session_state.current_epoch}/{epochs}")
         if st.session_state.current_epoch >= epochs:
@@ -305,6 +308,16 @@ with tab_evaluate:
             try:
                 with st.spinner("Evaluating…"):
                     config = st.session_state.run_config
+                    if config is None:
+                        config = {
+                            "dataset_name": st.session_state.model_dataset,
+                            "batch_size": int(batch_size),
+                            "train_limit": int(train_limit),
+                            "validation_limit": int(validation_limit),
+                            "test_limit": int(test_limit),
+                            "augment": bool(augment),
+                            "seed": int(seed),
+                        }
                     _, _, test_loader, _class_names = get_loaders(
                         **evaluation_loader_config(config)
                     )
@@ -388,23 +401,23 @@ with tab_evaluate:
             optimizer_state = payload.get("optimizer_state_dict")
             scheduler_state = payload.get("scheduler_state_dict")
             saved_config = payload.get("run_config") or {}
+            resumable = checkpoint_is_resumable(payload)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode="min", factor=float(saved_config.get("scheduler_factor", 0.5)),
-                patience=int(saved_config.get("scheduler_patience", 2)),
-            ) if saved_config.get("scheduler_enabled", False) else None
-            if optimizer_state is not None:
+                optimizer, mode="min", factor=float(saved_config["scheduler_factor"]),
+                patience=int(saved_config["scheduler_patience"]),
+            ) if resumable and saved_config["scheduler_enabled"] else None
+            if resumable:
                 optimizer.load_state_dict(optimizer_state)
-            if scheduler is not None and scheduler_state is not None:
-                scheduler.load_state_dict(scheduler_state)
-                restored_epoch = int(payload.get("epoch", 0))
-                restored_history = payload.get("history", [])
+                if scheduler is not None:
+                    scheduler.load_state_dict(scheduler_state)
             else:
-                restored_epoch = 0
-                restored_history = []
+                optimizer = None
+                scheduler = None
+            restored_epoch, restored_history = checkpoint_resume_progress(payload)
             st.session_state.model = model
             st.session_state.optimizer = optimizer
             st.session_state.scheduler = scheduler
-            st.session_state.early_stopping_state = payload.get("early_stopping_state") or {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}
+            st.session_state.early_stopping_state = (payload.get("early_stopping_state") or {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}) if resumable else {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}
             st.session_state.class_names = checkpoint_classes
             st.session_state.model_dataset = model_dataset
             st.session_state.current_epoch = restored_epoch
@@ -422,13 +435,13 @@ with tab_evaluate:
                 "scheduler_patience": int(saved_config.get("scheduler_patience", 2)),
                 "scheduler_factor": float(saved_config.get("scheduler_factor", 0.5)),
                 "early_stopping_enabled": bool(saved_config.get("early_stopping_enabled", False)),
-                "early_stopping_patience": int(saved_config.get("early_stopping_patience", 5)),
-            }
+                "early_stopping_patience": int(saved_config["early_stopping_patience"]),
+            } if resumable else None
             st.session_state.last_eval = None
-            if optimizer_state:
-                st.success("Resumed checkpoint with optimizer state and history at epoch {}.".format(restored_epoch))
+            if resumable:
+                st.success("Resumed checkpoint with complete experiment metadata at epoch {}.".format(restored_epoch))
             else:
-                st.success("Loaded model weights. No optimizer state was saved, so training starts at epoch 0.")
+                st.warning("Loaded model weights for inference. This checkpoint lacks complete resumable training metadata; current sidebar settings will not be treated as saved experiment settings.")
         except Exception as exc:
             st.error(f"Could not load checkpoint: {exc}")
 
