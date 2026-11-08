@@ -13,7 +13,7 @@ from PIL import Image, ImageOps
 from torch import nn
 
 from neural_lab.data import dataset_stats, evaluation_loader_config, make_loaders
-from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint, validate_checkpoint_payload
+from neural_lab.model import (CIFAR10_CLASSES, CifarCNN, available_device, checkpoint_resume_progress, save_checkpoint, validate_checkpoint_payload)
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, update_early_stopping
 
 st.set_page_config(page_title="Neural Lab", layout="wide")
@@ -396,11 +396,7 @@ with tab_evaluate:
                 optimizer.load_state_dict(optimizer_state)
             if scheduler is not None and scheduler_state is not None:
                 scheduler.load_state_dict(scheduler_state)
-                restored_epoch = int(payload.get("epoch", 0))
-                restored_history = payload.get("history", [])
-            else:
-                restored_epoch = 0
-                restored_history = []
+            restored_epoch, restored_history = checkpoint_resume_progress(payload)
             st.session_state.model = model
             st.session_state.optimizer = optimizer
             st.session_state.scheduler = scheduler
