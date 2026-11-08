@@ -41,3 +41,58 @@ def test_loader_configuration_errors_before_network_access():
         make_loaders(dataset_name="not-a-dataset")
     with pytest.raises(ValueError, match="batch_size"):
         make_loaders(batch_size=0)
+
+
+
+def _real_huggingface_stream(records):
+    from datasets import Features, Image as HFImage, IterableDataset, Value
+
+    def generate():
+        yield from records
+
+    return IterableDataset.from_generator(
+        generate,
+        features=Features({"image": HFImage(), "label": Value("int64")}),
+    )
+
+
+def test_real_huggingface_iterable_dataset_supports_offset_limit_and_batches():
+    from torch.utils.data import DataLoader
+
+    records = [
+        {"image": Image.new("RGB", (4, 4), (index, 0, 0)), "label": index}
+        for index in range(7)
+    ]
+    stream = _real_huggingface_stream(records)
+    dataset = HuggingFaceImageStream(
+        "unused/real-fixture", "train", "image", "label", transforms.ToTensor(),
+        limit=3, offset=2, shuffle=False, stream_factory=lambda: stream,
+    )
+    batches = list(DataLoader(dataset, batch_size=2))
+    labels = torch.cat([batch_labels for _images, batch_labels in batches]).tolist()
+    expected = [
+        row["label"]
+        for row in _real_huggingface_stream(records).shuffle(seed=42, buffer_size=10_000).skip(2).take(3)
+    ]
+    assert labels == expected
+    assert len(labels) == 3
+    assert [len(batch_labels) for _images, batch_labels in batches] == [2, 1]
+
+
+def test_real_huggingface_iterable_dataset_handles_empty_and_exhausted_streams():
+    empty_stream = _real_huggingface_stream([])
+    empty_dataset = HuggingFaceImageStream(
+        "unused/empty-fixture", "train", "image", "label", transforms.ToTensor(),
+        limit=4, stream_factory=lambda: empty_stream,
+    )
+    assert list(empty_dataset) == []
+
+    short_stream = _real_huggingface_stream([
+        {"image": Image.new("RGB", (4, 4)), "label": index}
+        for index in range(2)
+    ])
+    exhausted_dataset = HuggingFaceImageStream(
+        "unused/short-fixture", "train", "image", "label", transforms.ToTensor(),
+        limit=5, offset=10, stream_factory=lambda: short_stream,
+    )
+    assert list(exhausted_dataset) == []
