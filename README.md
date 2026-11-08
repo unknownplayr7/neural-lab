@@ -85,6 +85,17 @@ python -m pytest
 
 GitHub Actions runs the test suite on macOS. Hosted CI is not a substitute for testing MPS performance on each supported Mac model.
 
+### Apple Silicon MPS smoke test
+
+On a physical Apple Silicon Mac with a PyTorch build that supports Metal, run:
+
+```bash
+python -c "import torch; print('MPS available:', torch.backends.mps.is_available()); assert torch.backends.mps.is_available(), 'This Python/PyTorch environment cannot access MPS'"
+python -m pytest -q tests/test_mps_smoke.py
+```
+
+The smoke test performs a model forward pass, computes loss, runs backpropagation and an optimizer step, then performs inference on MPS and checks that outputs and parameters remain on the MPS device and finite. The test is skipped with an explicit reason when MPS is unavailable; a skipped CI run is not evidence that MPS works on a physical Mac. The CPU path remains covered separately.
+
 ## Project layout
 
 ```text
