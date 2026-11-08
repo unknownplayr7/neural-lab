@@ -187,3 +187,28 @@ def test_checkpoint_restores_scheduler_and_early_stopping_state(tmp_path: Path):
     restored_scheduler.load_state_dict(payload["scheduler_state_dict"])
     assert payload["early_stopping_state"] == early_state
     assert restored_scheduler.state_dict() == scheduler.state_dict()
+
+
+
+def test_checkpoint_progress_restores_without_scheduler_state():
+    from neural_lab.model import checkpoint_resume_progress
+
+    payload = {
+        "epoch": 4,
+        "history": [{"epoch": 1.0}, {"epoch": 2.0}, {"epoch": 3.0}, {"epoch": 4.0}],
+        "optimizer_state_dict": {"state": {}, "param_groups": []},
+        "scheduler_state_dict": None,
+    }
+    epoch, history = checkpoint_resume_progress(payload)
+    assert epoch == 4
+    assert len(history) == 4
+
+
+def test_weights_only_checkpoint_does_not_claim_resumable_progress():
+    from neural_lab.model import checkpoint_resume_progress
+
+    epoch, history = checkpoint_resume_progress({
+        "epoch": 7, "history": [{"epoch": 7.0}], "optimizer_state_dict": None,
+    })
+    assert epoch == 0
+    assert history == []
