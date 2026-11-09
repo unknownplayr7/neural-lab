@@ -227,10 +227,9 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
         if len(classes) != expected_class_count:
             raise ValueError("Checkpoint dataset_name does not match class count")
         canonical_classes = CIFAR10_CLASSES if config["dataset_name"] == "cifar10" else CIFAR100_CLASSES
-        if set(normalized_classes) != {name.casefold() for name in canonical_classes}:
+        if tuple(normalized_classes) != tuple(name.casefold() for name in canonical_classes):
             raise ValueError(
-                "Checkpoint class_names must match the canonical CIFAR class set; "
-                "class ordering may differ"
+                "Checkpoint class_names must match the exact canonical CIFAR class-index order"
             )
     for key in ("batch_size", "train_limit", "validation_limit", "test_limit"):
         if key in config and config[key] < 1:
@@ -285,10 +284,10 @@ def checkpoint_class_names_verified(payload: dict[str, Any]) -> bool:
     if not all(isinstance(name, str) and name.strip() for name in classes):
         return False
     expected = CIFAR10_CLASSES if len(classes) == 10 else CIFAR100_CLASSES
-    normalized = {name.strip().casefold() for name in classes}
-    if len(normalized) != len(classes):
+    normalized = tuple(name.strip().casefold() for name in classes)
+    if len(set(normalized)) != len(classes):
         return False
-    if normalized != {name.casefold() for name in expected}:
+    if normalized != tuple(name.casefold() for name in expected):
         return False
     config = payload.get("run_config")
     if isinstance(config, dict) and "dataset_name" in config:
