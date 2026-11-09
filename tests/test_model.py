@@ -9,7 +9,7 @@ from neural_lab.model import (
 )
 
 
-def __save_checkpoint(path: Path, *args, **kwargs) -> Path:
+def _save_checkpoint(path: Path, *args, **kwargs) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as checkpoint_file:
         save_checkpoint(checkpoint_file, *args, **kwargs)
@@ -229,3 +229,14 @@ def test_cifar100_checkpoint_accepts_canonical_class_order(tmp_path: Path):
     )
     payload = load_checkpoint(path, CifarCNN(num_classes=100))
     assert tuple(payload["class_names"]) == classes
+
+
+def test_legacy_custom_class_names_are_marked_unverified_for_inference(tmp_path: Path):
+    from neural_lab.model import checkpoint_class_names_verified
+
+    custom_names = tuple(f"custom_{index}" for index in range(10))
+    path = _save_checkpoint(
+        tmp_path / "legacy-custom.pt", CifarCNN(), epoch=2, class_names=custom_names
+    )
+    payload = load_checkpoint(path, CifarCNN())
+    assert checkpoint_class_names_verified(payload) is False

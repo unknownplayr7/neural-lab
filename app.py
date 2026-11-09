@@ -402,6 +402,11 @@ with tab_evaluate:
                     "Resumed checkpoint with complete experiment metadata at epoch {}."
                     .format(restored["current_epoch"])
                 )
+            elif not restored["class_names_verified"]:
+                st.warning(
+                    "Loaded model weights for inference, but the checkpoint labels do not "
+                    "match a canonical CIFAR class set. Displayed class names are unverified."
+                )
             else:
                 st.warning(
                     "Loaded model weights for inference. This checkpoint lacks complete "

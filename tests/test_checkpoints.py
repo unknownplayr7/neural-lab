@@ -82,6 +82,7 @@ def test_restore_incomplete_checkpoint_enters_inference_only_mode():
     assert restored["current_epoch"] == 0
     assert restored["history"] == []
     assert restored["run_config"] is None
+    assert restored["class_names_verified"] is True
 
 
 def test_restore_rejects_invalid_metadata_before_returning_replacement_state():
@@ -100,3 +101,19 @@ def test_restore_rejects_oversized_and_empty_uploads():
         restore_checkpoint(b"x" * (25 * 1024 * 1024 + 1))
     with pytest.raises(ValueError, match="empty"):
         restore_checkpoint(b"")
+
+
+def test_restore_marks_legacy_custom_labels_as_unverified_inference_only():
+    model = CifarCNN()
+    buffer = io.BytesIO()
+    save_checkpoint(
+        buffer,
+        model,
+        epoch=2,
+        class_names=tuple(f"custom_{index}" for index in range(10)),
+    )
+    restored = restore_checkpoint(buffer.getvalue())
+
+    assert restored["class_names_verified"] is False
+    assert restored["resumable"] is False
+    assert restored["optimizer"] is None

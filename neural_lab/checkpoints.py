@@ -9,6 +9,7 @@ import torch
 
 from neural_lab.model import (
     CifarCNN,
+    checkpoint_class_names_verified,
     checkpoint_is_resumable,
     checkpoint_resume_progress,
     validate_checkpoint_payload,
@@ -44,6 +45,7 @@ def restore_checkpoint(
     model = model.to(device)
 
     saved_config = payload.get("run_config") or {}
+    class_names_verified = checkpoint_class_names_verified(payload)
     resumable = checkpoint_is_resumable(payload)
     model_dataset = (
         saved_config.get("dataset_name")
@@ -88,4 +90,5 @@ def restore_checkpoint(
         "run_config": run_config,
         "last_eval": None,
         "resumable": resumable,
+        "class_names_verified": class_names_verified,
     }
