@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import torch
 from torch import nn
@@ -10,6 +10,23 @@ from torch import nn
 CIFAR10_CLASSES = (
     "airplane", "automobile", "bird", "cat", "deer",
     "dog", "frog", "horse", "ship", "truck",
+)
+CIFAR100_CLASSES = (
+    "apple", "aquarium_fish", "baby", "bear", "beaver", "bed", "bee", "beetle",
+    "bicycle", "bottle", "bowl", "boy", "bridge", "bus", "butterfly", "camel",
+    "can", "castle", "caterpillar", "cattle", "chair", "chimpanzee", "clock",
+    "cloud", "cockroach", "couch", "crab", "crocodile", "cup", "dinosaur",
+    "dolphin", "elephant", "flatfish", "forest", "fox", "girl", "hamster",
+    "house", "kangaroo", "keyboard", "lamp", "lawn_mower", "leopard", "lion",
+    "lizard", "lobster", "man", "maple_tree", "motorcycle", "mountain", "mouse",
+    "mushroom", "oak_tree", "orange", "orchid", "otter", "palm_tree", "pear",
+    "pickup_truck", "pine_tree", "plain", "plate", "poppy", "porcupine",
+    "possum", "rabbit", "raccoon", "ray", "road", "rocket", "rose", "sea",
+    "seal", "shark", "shrew", "skunk", "skyscraper", "snail", "snake",
+    "spider", "squirrel", "streetcar", "sunflower", "sweet_pepper", "table",
+    "tank", "telephone", "television", "tiger", "tractor", "train", "trout",
+    "tulip", "turtle", "wardrobe", "whale", "willow_tree", "wolf", "woman",
+    "worm",
 )
 CIFAR10_MEAN = (0.4914, 0.4822, 0.4465)
 CIFAR10_STD = (0.2470, 0.2435, 0.2616)
@@ -107,7 +124,7 @@ def _cpu_tree(value: Any) -> Any:
 
 
 def save_checkpoint(
-    path: str | Path,
+    checkpoint_file: BinaryIO,
     model: CifarCNN,
     *,
     epoch: int,
@@ -118,10 +135,11 @@ def save_checkpoint(
     run_config: dict[str, Any] | None = None,
     scheduler: Any | None = None,
     early_stopping_state: dict[str, Any] | None = None,
-) -> Path:
-    """Save weights plus small, explicit metadata."""
-    target = Path(path)
-    target.parent.mkdir(parents=True, exist_ok=True)
+) -> None:
+    """Serialize a checkpoint to an already-open binary file.
+
+    Filesystem path selection and directory creation belong to the caller.
+    """
     payload: dict[str, Any] = {
         "format_version": 1,
         "model_state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},
@@ -135,8 +153,7 @@ def save_checkpoint(
         "scheduler_state_dict": _cpu_tree(scheduler.state_dict()) if scheduler is not None else None,
         "early_stopping_state": dict(early_stopping_state or {}),
     }
-    torch.save(payload, target)
-    return target
+    torch.save(payload, checkpoint_file)
 
 
 def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
@@ -165,6 +182,12 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
     normalized_classes = [name.strip().casefold() for name in classes]
     if len(set(normalized_classes)) != len(normalized_classes):
         raise ValueError("Checkpoint class_names must be unique")
+    canonical_classes = CIFAR10_CLASSES if len(classes) == 10 else CIFAR100_CLASSES
+    if set(normalized_classes) != {name.casefold() for name in canonical_classes}:
+        raise ValueError(
+            "Checkpoint class_names must match the canonical CIFAR class set; "
+            "class ordering may differ"
+        )
 
     accuracy = payload.get("accuracy")
     if accuracy is not None and (

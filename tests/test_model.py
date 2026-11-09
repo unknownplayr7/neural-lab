@@ -3,7 +3,17 @@ from pathlib import Path
 import pytest
 import torch
 
-from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, load_checkpoint, save_checkpoint
+from neural_lab.model import (
+    CIFAR10_CLASSES, CIFAR100_CLASSES, CifarCNN, available_device, load_checkpoint,
+    save_checkpoint,
+)
+
+
+def __save_checkpoint(path: Path, *args, **kwargs) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as checkpoint_file:
+        save_checkpoint(checkpoint_file, *args, **kwargs)
+    return path
 
 
 def test_model_returns_ten_logits_for_cifar_images():
@@ -36,7 +46,7 @@ def test_auto_and_cpu_devices_are_available():
 
 def test_checkpoint_round_trip(tmp_path: Path):
     original = CifarCNN()
-    path = save_checkpoint(tmp_path / "model.pt", original, epoch=3, accuracy=0.75)
+    path = _save_checkpoint(tmp_path / "model.pt", original, epoch=3, accuracy=0.75)
     restored = CifarCNN()
     metadata = load_checkpoint(path, restored)
     assert metadata["epoch"] == 3
@@ -60,7 +70,7 @@ def test_checkpoint_preserves_optimizer_state_and_history(tmp_path: Path):
     loss.backward()
     optimizer.step()
     history = [{"epoch": 1.0, "train_loss": 2.0, "val_loss": 2.1}]
-    path = save_checkpoint(
+    path = _save_checkpoint(
         tmp_path / "resume.pt", model, epoch=1, optimizer=optimizer, history=history
     )
     restored = CifarCNN()
@@ -99,7 +109,7 @@ def test_checkpoint_loader_never_executes_pickle_payload(tmp_path: Path):
 
 
 def test_checkpoint_rejects_unsupported_format_version(tmp_path: Path):
-    path = save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    path = _save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
     payload = torch.load(path, weights_only=True)
     payload["format_version"] = 99
     torch.save(payload, path)
@@ -116,7 +126,7 @@ def test_checkpoint_rejects_unsupported_format_version(tmp_path: Path):
     ("accuracy", 1.5, "accuracy"),
 ])
 def test_checkpoint_rejects_malformed_metadata(tmp_path: Path, field, value, message):
-    path = save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    path = _save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
     payload = torch.load(path, weights_only=True)
     payload[field] = value
     torch.save(payload, path)
@@ -125,14 +135,14 @@ def test_checkpoint_rejects_malformed_metadata(tmp_path: Path, field, value, mes
 
 
 def test_checkpoint_rejects_class_count_mismatch(tmp_path: Path):
-    path = save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    path = _save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
     with pytest.raises(ValueError, match="class count"):
         load_checkpoint(path, CifarCNN(num_classes=100))
 
 
 
 def test_checkpoint_rejects_duplicate_class_names(tmp_path: Path):
-    path = save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    path = _save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
     payload = torch.load(path, weights_only=True)
     payload["class_names"][1] = payload["class_names"][0].upper()
     torch.save(payload, path)
@@ -141,7 +151,7 @@ def test_checkpoint_rejects_duplicate_class_names(tmp_path: Path):
 
 
 def test_checkpoint_rejects_dataset_class_count_mismatch(tmp_path: Path):
-    path = save_checkpoint(
+    path = _save_checkpoint(
         tmp_path / "valid.pt", CifarCNN(), epoch=0,
         run_config={"dataset_name": "cifar100"},
     )
@@ -154,7 +164,7 @@ def test_partial_run_config_is_inference_only_not_resumable(tmp_path: Path):
 
     model = CifarCNN()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    path = save_checkpoint(
+    path = _save_checkpoint(
         tmp_path / "partial.pt", model, epoch=5, optimizer=optimizer,
         history=[{"epoch": 5.0}], run_config={"dataset_name": "cifar10"},
     )
@@ -175,10 +185,47 @@ def test_complete_run_config_without_scheduler_is_resumable(tmp_path: Path):
     }
     model = CifarCNN()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    path = save_checkpoint(
+    path = _save_checkpoint(
         tmp_path / "no-scheduler.pt", model, epoch=3, optimizer=optimizer,
         history=[{"epoch": 1.0}, {"epoch": 2.0}, {"epoch": 3.0}], run_config=config,
     )
     payload = load_checkpoint(path, CifarCNN())
     assert checkpoint_is_resumable(payload) is True
     assert checkpoint_resume_progress(payload) == (3, payload["history"])
+
+
+def test_checkpoint_rejects_arbitrary_unique_class_names(tmp_path: Path):
+    path = _save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    payload = torch.load(path, weights_only=True)
+    payload["class_names"] = [f"unrelated_{index}" for index in range(10)]
+    torch.save(payload, path)
+    with pytest.raises(ValueError, match="canonical CIFAR class set"):
+        load_checkpoint(path, CifarCNN())
+
+
+def test_checkpoint_rejects_missing_canonical_class_name(tmp_path: Path):
+    path = _save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    payload = torch.load(path, weights_only=True)
+    payload["class_names"][0] = "not_a_cifar_class"
+    torch.save(payload, path)
+    with pytest.raises(ValueError, match="canonical CIFAR class set"):
+        load_checkpoint(path, CifarCNN())
+
+
+def test_checkpoint_accepts_non_default_canonical_class_order(tmp_path: Path):
+    reversed_classes = tuple(reversed(CIFAR10_CLASSES))
+    path = _save_checkpoint(
+        tmp_path / "reordered.pt", CifarCNN(), epoch=0, class_names=reversed_classes
+    )
+    payload = load_checkpoint(path, CifarCNN())
+    assert tuple(payload["class_names"]) == reversed_classes
+
+
+def test_cifar100_checkpoint_accepts_canonical_class_order(tmp_path: Path):
+    classes = tuple(reversed(CIFAR100_CLASSES))
+    path = _save_checkpoint(
+        tmp_path / "cifar100.pt", CifarCNN(num_classes=100), epoch=0,
+        class_names=classes, run_config={"dataset_name": "cifar100"},
+    )
+    payload = load_checkpoint(path, CifarCNN(num_classes=100))
+    assert tuple(payload["class_names"]) == classes
