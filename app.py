@@ -12,8 +12,9 @@ import torch
 from PIL import Image, ImageOps
 from torch import nn
 
+from neural_lab.checkpoints import restore_checkpoint
 from neural_lab.data import dataset_stats, evaluation_loader_config, make_loaders
-from neural_lab.model import (CIFAR10_CLASSES, CifarCNN, available_device, checkpoint_is_resumable, checkpoint_resume_progress, save_checkpoint, validate_checkpoint_payload)
+from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, update_early_stopping
 
 st.set_page_config(page_title="Neural Lab", layout="wide")
@@ -283,17 +284,21 @@ with tab_train:
                 latest = st.session_state.history[-1] if st.session_state.history else {}
                 if Path(checkpoint_name).name != checkpoint_name or Path(checkpoint_name).suffix.lower() not in {".pt", ".pth"}:
                     raise ValueError("Enter a filename ending in .pt or .pth, without folders.")
-                saved = save_checkpoint(
-                    Path("checkpoints") / checkpoint_name, st.session_state.model,
-                    epoch=int(st.session_state.current_epoch),
-                    accuracy=latest.get("val_accuracy"),
-                    class_names=tuple(st.session_state.class_names),
-                    optimizer=st.session_state.optimizer,
-                    history=st.session_state.history,
-                    run_config=st.session_state.run_config,
-                    scheduler=st.session_state.scheduler,
-                    early_stopping_state=st.session_state.early_stopping_state,
-                )
+                checkpoint_dir = Path("checkpoints")
+                checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                saved = checkpoint_dir / checkpoint_name
+                with saved.open("wb") as checkpoint_file:
+                    save_checkpoint(
+                        checkpoint_file, st.session_state.model,
+                        epoch=int(st.session_state.current_epoch),
+                        accuracy=latest.get("val_accuracy"),
+                        class_names=tuple(st.session_state.class_names),
+                        optimizer=st.session_state.optimizer,
+                        history=st.session_state.history,
+                        run_config=st.session_state.run_config,
+                        scheduler=st.session_state.scheduler,
+                        early_stopping_state=st.session_state.early_stopping_state,
+                    )
                 st.success(f"Saved resumable checkpoint to {saved}")
             except (OSError, ValueError) as exc:
                 st.error(f"Could not save checkpoint: {exc}")
@@ -384,64 +389,30 @@ with tab_evaluate:
     uploaded_checkpoint = st.file_uploader("Checkpoint (.pt or .pth)", type=["pt", "pth"], key="checkpoint-upload")
     if uploaded_checkpoint is not None and st.button("Load checkpoint"):
         try:
-            checkpoint_bytes = uploaded_checkpoint.getvalue()
-            if len(checkpoint_bytes) > 25 * 1024 * 1024:
-                raise ValueError("Checkpoint exceeds the 25 MiB upload limit.")
-            payload_bytes = io.BytesIO(checkpoint_bytes)
-            payload = torch.load(payload_bytes, map_location="cpu", weights_only=True)
-            validate_checkpoint_payload(payload)
-            checkpoint_classes = tuple(payload["class_names"])
-            if len(checkpoint_classes) not in (10, 100) or not all(isinstance(name, str) and name for name in checkpoint_classes):
-                raise ValueError("Checkpoint class metadata is invalid.")
-            model = CifarCNN(num_classes=len(checkpoint_classes))
-            model.load_state_dict(payload["model_state_dict"], strict=True)
-            model = model.to(device)
-            model_dataset = "cifar100" if len(checkpoint_classes) > 10 else "cifar10"
-            optimizer = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=1e-4)
-            optimizer_state = payload.get("optimizer_state_dict")
-            scheduler_state = payload.get("scheduler_state_dict")
-            saved_config = payload.get("run_config") or {}
-            resumable = checkpoint_is_resumable(payload)
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode="min", factor=float(saved_config["scheduler_factor"]),
-                patience=int(saved_config["scheduler_patience"]),
-            ) if resumable and saved_config["scheduler_enabled"] else None
-            if resumable:
-                optimizer.load_state_dict(optimizer_state)
-                if scheduler is not None:
-                    scheduler.load_state_dict(scheduler_state)
+            restored = restore_checkpoint(uploaded_checkpoint.getvalue(), device=device)
+            # Build and validate the complete replacement state before mutating session state.
+            for key in (
+                "model", "optimizer", "scheduler", "early_stopping_state",
+                "class_names", "model_dataset", "current_epoch", "history",
+                "run_config", "last_eval",
+            ):
+                setattr(st.session_state, key, restored[key])
+            if restored["resumable"]:
+                st.success(
+                    "Resumed checkpoint with complete experiment metadata at epoch {}."
+                    .format(restored["current_epoch"])
+                )
+            elif not restored["class_names_verified"]:
+                st.warning(
+                    "Loaded model weights for inference, but the checkpoint labels do not "
+                    "match a canonical CIFAR class set. Displayed class names are unverified."
+                )
             else:
-                optimizer = None
-                scheduler = None
-            restored_epoch, restored_history = checkpoint_resume_progress(payload)
-            st.session_state.model = model
-            st.session_state.optimizer = optimizer
-            st.session_state.scheduler = scheduler
-            st.session_state.early_stopping_state = (payload.get("early_stopping_state") or {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}) if resumable else {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}
-            st.session_state.class_names = checkpoint_classes
-            st.session_state.model_dataset = model_dataset
-            st.session_state.current_epoch = restored_epoch
-            st.session_state.history = restored_history
-            st.session_state.run_config = {
-                "dataset_name": model_dataset,
-                "batch_size": int(saved_config.get("batch_size", batch_size)),
-                "train_limit": int(saved_config.get("train_limit", train_limit)),
-                "validation_limit": int(saved_config.get("validation_limit", validation_limit)),
-                "test_limit": int(saved_config.get("test_limit", test_limit)),
-                "augment": bool(saved_config.get("augment", augment)),
-                "seed": int(saved_config.get("seed", seed)),
-                "learning_rate": float(saved_config.get("learning_rate", learning_rate)),
-                "scheduler_enabled": bool(saved_config.get("scheduler_enabled", False)),
-                "scheduler_patience": int(saved_config.get("scheduler_patience", 2)),
-                "scheduler_factor": float(saved_config.get("scheduler_factor", 0.5)),
-                "early_stopping_enabled": bool(saved_config.get("early_stopping_enabled", False)),
-                "early_stopping_patience": int(saved_config["early_stopping_patience"]),
-            } if resumable else None
-            st.session_state.last_eval = None
-            if resumable:
-                st.success("Resumed checkpoint with complete experiment metadata at epoch {}.".format(restored_epoch))
-            else:
-                st.warning("Loaded model weights for inference. This checkpoint lacks complete resumable training metadata; current sidebar settings will not be treated as saved experiment settings.")
+                st.warning(
+                    "Loaded model weights for inference. This checkpoint lacks complete "
+                    "resumable training metadata; current sidebar settings will not be "
+                    "treated as saved experiment settings."
+                )
         except Exception as exc:
             st.error(f"Could not load checkpoint: {exc}")
 

@@ -10,6 +10,13 @@ from neural_lab.model import CifarCNN, load_checkpoint, save_checkpoint
 from neural_lab.training import update_early_stopping
 
 
+def _save_checkpoint(path: Path, *args, **kwargs) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as checkpoint_file:
+        save_checkpoint(checkpoint_file, *args, **kwargs)
+    return path
+
+
 class _FakeIterableStream:
     def __init__(self, rows):
         self.rows = list(rows)
@@ -105,7 +112,7 @@ def test_checkpoint_resume_workflow_restores_weights_optimizer_and_run_config(tm
         "validation_limit": 1000, "test_limit": 1000, "augment": True,
         "seed": 73, "learning_rate": 0.001,
     }
-    path = save_checkpoint(
+    path = _save_checkpoint(
         tmp_path / "resume.pt", model, epoch=1, optimizer=optimizer,
         history=history, run_config=config, accuracy=0.4,
     )
@@ -175,7 +182,7 @@ def test_checkpoint_restores_scheduler_and_early_stopping_state(tmp_path: Path):
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=1)
     scheduler.step(1.0)
     early_state = {"best_loss": 1.0, "bad_epochs": 1, "stopped": False}
-    path = save_checkpoint(
+    path = _save_checkpoint(
         tmp_path / "training-state.pt", model, epoch=2, optimizer=optimizer,
         scheduler=scheduler, early_stopping_state=early_state,
     )
