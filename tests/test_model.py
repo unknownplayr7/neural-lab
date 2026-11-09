@@ -195,7 +195,10 @@ def test_complete_run_config_without_scheduler_is_resumable(tmp_path: Path):
 
 
 def test_checkpoint_rejects_arbitrary_unique_class_names(tmp_path: Path):
-    path = _save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    path = _save_checkpoint(
+        tmp_path / "valid.pt", CifarCNN(), epoch=0,
+        run_config={"dataset_name": "cifar10"},
+    )
     payload = torch.load(path, weights_only=True)
     payload["class_names"] = [f"unrelated_{index}" for index in range(10)]
     torch.save(payload, path)
@@ -204,7 +207,10 @@ def test_checkpoint_rejects_arbitrary_unique_class_names(tmp_path: Path):
 
 
 def test_checkpoint_rejects_missing_canonical_class_name(tmp_path: Path):
-    path = _save_checkpoint(tmp_path / "valid.pt", CifarCNN(), epoch=0)
+    path = _save_checkpoint(
+        tmp_path / "valid.pt", CifarCNN(), epoch=0,
+        run_config={"dataset_name": "cifar10"},
+    )
     payload = torch.load(path, weights_only=True)
     payload["class_names"][0] = "not_a_cifar_class"
     torch.save(payload, path)
