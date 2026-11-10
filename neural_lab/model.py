@@ -234,7 +234,7 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
     version = payload.get("format_version")
     if isinstance(version, bool) or not isinstance(version, int) or version != 1:
         raise ValueError("Unsupported checkpoint format_version; expected 1")
-    if payload.get("architecture") not in {"CifarCNN", "CifarResNet"}:
+    if payload.get("architecture", "CifarCNN") not in {"CifarCNN", "CifarResNet"}:
         raise ValueError("Unsupported checkpoint architecture")
     state = payload.get("model_state_dict")
     if not isinstance(state, dict) or not state:
