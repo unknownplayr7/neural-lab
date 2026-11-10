@@ -8,8 +8,10 @@ import os
 from pathlib import Path
 import platform
 import tempfile
+import math
 from typing import Any
 from uuid import UUID, uuid4
+import warnings
 
 import torch
 
@@ -58,6 +60,44 @@ def create_experiment_record(
     return record
 
 
+def _validate_history(history: Any) -> None:
+    """Validate metric rows used by training history and run comparison."""
+    if not isinstance(history, list):
+        raise ValueError("Experiment history must be a list")
+    required = ("epoch", "val_loss", "val_accuracy")
+    optional = (
+        "train_loss", "train_accuracy", "seconds",
+        "learning_rate", "next_learning_rate", "early_stopped",
+    )
+    for index, row in enumerate(history):
+        prefix = f"Experiment history entry {index}"
+        if not isinstance(row, dict):
+            raise ValueError(f"{prefix} must be a mapping")
+        for key in required:
+            if key not in row:
+                raise ValueError(f"{prefix} is missing required metric {key!r}")
+        for key in (*required, *optional):
+            if key not in row:
+                continue
+            value = row[key]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"{prefix} metric {key!r} must be a finite number")
+        if row["epoch"] < 1:
+            raise ValueError(f"{prefix} epoch must be positive")
+        if row["val_loss"] < 0:
+            raise ValueError(f"{prefix} val_loss cannot be negative")
+        if not 0 <= row["val_accuracy"] <= 1:
+            raise ValueError(f"{prefix} val_accuracy must be between 0 and 1")
+        for key in ("train_loss", "seconds"):
+            if key in row and row[key] < 0:
+                raise ValueError(f"{prefix} metric {key!r} cannot be negative")
+        if "train_accuracy" in row and not 0 <= row["train_accuracy"] <= 1:
+            raise ValueError(f"{prefix} metric 'train_accuracy' must be between 0 and 1")
+        for key in ("learning_rate", "next_learning_rate"):
+            if key in row and row[key] <= 0:
+                raise ValueError(f"{prefix} metric {key!r} must be positive")
+
+
 def _validate_record(record: Any) -> dict[str, Any]:
     if not isinstance(record, dict) or record.get("schema_version") != EXPERIMENT_SCHEMA_VERSION:
         raise ValueError("Unsupported experiment record")
@@ -75,8 +115,7 @@ def _validate_record(record: Any) -> dict[str, Any]:
         raise ValueError("Experiment run_config must be a mapping")
     if not isinstance(record.get("software"), dict):
         raise ValueError("Experiment software metadata must be a mapping")
-    if not isinstance(record.get("history"), list):
-        raise ValueError("Experiment history must be a list")
+    _validate_history(record.get("history"))
     if record.get("test_metrics") is not None and not isinstance(record["test_metrics"], dict):
         raise ValueError("Experiment test_metrics must be a mapping or null")
     # Reject tensors, NaN/Infinity, and unexpected Python objects before persistence.
@@ -168,7 +207,12 @@ def load_experiment_records(directory: str | Path = "experiments") -> list[dict[
             _validate_record(record)
             if path.stem == record["run_id"]:
                 records.append(record)
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            warnings.warn(
+                f"Skipping invalid experiment record {path.name}: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             continue
     return sorted(records, key=lambda item: item["created_at"], reverse=True)
 
