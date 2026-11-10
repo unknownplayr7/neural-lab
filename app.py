@@ -17,6 +17,13 @@ from neural_lab.data import dataset_stats, evaluation_loader_config, make_loader
 from neural_lab.model import CIFAR10_CLASSES, build_model, available_device, save_checkpoint
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, update_early_stopping
 from neural_lab.labels import display_class_name
+from neural_lab.experiments import (
+    comparison_rows,
+    create_experiment_record,
+    load_experiment_records,
+    save_experiment_record,
+    update_experiment_record,
+)
 
 st.set_page_config(page_title="Neural Lab", layout="wide")
 if platform.system() != "Darwin":
@@ -59,6 +66,8 @@ if "scheduler" not in st.session_state:
     st.session_state.scheduler = None
 if "early_stopping_state" not in st.session_state:
     st.session_state.early_stopping_state = {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}
+if "experiment_record" not in st.session_state:
+    st.session_state.experiment_record = None
 
 
 def device_options() -> list[str]:
@@ -142,7 +151,7 @@ except RuntimeError as exc:
     st.error(str(exc))
     st.stop()
 
-tab_train, tab_evaluate, tab_predict, tab_about = st.tabs(["Train", "Evaluate", "Predict", "Model & notes"])
+tab_train, tab_evaluate, tab_predict, tab_compare, tab_about = st.tabs(["Train", "Evaluate", "Predict", "Compare runs", "Model & notes"])
 
 with tab_train:
     st.subheader("Train a convolutional neural network")
@@ -168,6 +177,12 @@ with tab_train:
                 loader_config = {key: value for key, value in config.items() if key != "architecture"}
                 _train_loader, _validation_loader, _test_loader, class_names = get_loaders(**loader_config)
             model = build_model(architecture_choice, num_classes=len(class_names)).to(device)
+            experiment_record = create_experiment_record(
+                {**config, "learning_rate": float(learning_rate)},
+                architecture=architecture_choice,
+                device=str(device),
+            )
+            save_experiment_record(experiment_record)
             optimizer = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=1e-4)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode="min", factor=float(scheduler_factor), patience=int(scheduler_patience)
@@ -183,6 +198,7 @@ with tab_train:
             st.session_state.current_epoch = 0
             st.session_state.history = []
             st.session_state.last_eval = None
+            st.session_state.experiment_record = experiment_record
             st.success(f"New {dataset_choice} run initialized. Train the first epoch when ready.")
         except Exception as exc:
             st.error(f"Could not initialize training: {exc}")
@@ -195,6 +211,8 @@ with tab_train:
             st.info("Start a new run or load a checkpoint to begin training.")
     else:
         st.write(f"**Active run:** {st.session_state.model_dataset.upper()} · epoch {st.session_state.current_epoch}/{epochs}")
+        if st.session_state.experiment_record is not None:
+            st.caption("Experiment ID: " + st.session_state.experiment_record["run_id"] + " · metadata saved in experiments/.")
         if st.session_state.current_epoch >= epochs:
             st.success("Target epoch count reached. Increase the Epochs setting to continue training.")
         can_train = st.session_state.current_epoch < epochs and not st.session_state.early_stopping_state.get("stopped", False)
@@ -259,6 +277,14 @@ with tab_train:
                     }
                     st.session_state.history = [*st.session_state.history, record]
                     st.session_state.current_epoch = epoch_number
+                    if st.session_state.experiment_record is not None:
+                        try:
+                            st.session_state.experiment_record = update_experiment_record(
+                                st.session_state.experiment_record, st.session_state.history
+                            )
+                            save_experiment_record(st.session_state.experiment_record)
+                        except (OSError, ValueError, TypeError) as exc:
+                            st.warning(f"Could not update experiment metadata: {exc}")
                     progress.progress((step + 1) / total_steps, text=f"Completed epoch {epoch_number}/{epochs}")
                     if st.session_state.early_stopping_state.get("stopped", False):
                         record["early_stopped"] = 1.0
@@ -344,6 +370,13 @@ with tab_evaluate:
                         **evaluation_loader_config(config)
                     )
                     st.session_state.last_eval = evaluate_classifier(st.session_state.model.to(device), test_loader, device, num_classes=len(st.session_state.class_names))
+                    if st.session_state.experiment_record is not None:
+                        st.session_state.experiment_record = update_experiment_record(
+                            st.session_state.experiment_record,
+                            st.session_state.history,
+                            st.session_state.last_eval,
+                        )
+                        save_experiment_record(st.session_state.experiment_record)
             except Exception as exc:
                 st.error(f"Evaluation failed: {exc}")
         metrics = st.session_state.last_eval
@@ -414,6 +447,7 @@ with tab_evaluate:
                 "run_config", "last_eval",
             ):
                 setattr(st.session_state, key, restored[key])
+            st.session_state.experiment_record = None
             if restored["resumable"]:
                 st.success(
                     "Resumed checkpoint with complete experiment metadata at epoch {}."
@@ -468,6 +502,35 @@ with tab_predict:
                              use_container_width=True, hide_index=True)
         except (OSError, ValueError, Image.DecompressionBombError) as exc:
             st.error(f"Could not read that image: {exc}")
+
+with tab_compare:
+    st.subheader("Compare saved experiments")
+    records = load_experiment_records()
+    if not records:
+        st.info("No saved experiment records yet. Start a run to create one.")
+    else:
+        st.caption("Records are stored locally as JSON in the experiments/ directory. Older checkpoints without a record remain loadable but cannot be reconstructed into full experiment history.")
+        st.dataframe(comparison_rows(records), use_container_width=True, hide_index=True)
+        selected = st.selectbox(
+            "Inspect experiment",
+            options=[record["run_id"] for record in records],
+            format_func=lambda run_id: next(
+                "{} · {} · {} · {}".format(
+                    record["created_at"], record["dataset_name"].upper(),
+                    record["architecture"], run_id[:8]
+                )
+                for record in records if record["run_id"] == run_id
+            ),
+        )
+        selected_record = next(record for record in records if record["run_id"] == selected)
+        st.json({
+            "run_id": selected_record["run_id"],
+            "created_at": selected_record["created_at"],
+            "dataset_source": selected_record["dataset_source"],
+            "split_strategy": selected_record["split_strategy"],
+            "run_config": selected_record["run_config"],
+            "software": selected_record["software"],
+        })
 
 with tab_about:
     st.subheader("What is being trained?")
