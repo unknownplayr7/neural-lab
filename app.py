@@ -420,7 +420,7 @@ with tab_evaluate:
             elif not restored["class_names_verified"]:
                 st.warning(
                     "Loaded model weights for inference, but the checkpoint labels do not "
-                    "match a canonical CIFAR class set. Displayed class names are unverified."
+                    "match a canonical CIFAR class-index mapping. Evaluation and predictions use output indices instead of semantic labels."
                 )
             else:
                 st.warning(
