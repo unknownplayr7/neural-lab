@@ -21,6 +21,7 @@ from neural_lab.benchmark import benchmark_to_csv, benchmark_to_json, run_infere
 from neural_lab.experiments import (
     comparison_rows,
     create_experiment_record,
+    load_experiment_record,
     load_experiment_records,
     save_experiment_record,
     update_experiment_record,
@@ -335,6 +336,10 @@ with tab_train:
                             run_config=st.session_state.run_config,
                             scheduler=st.session_state.scheduler,
                             early_stopping_state=st.session_state.early_stopping_state,
+                            experiment_record_id=(
+                                st.session_state.experiment_record["run_id"]
+                                if st.session_state.experiment_record is not None else None
+                            ),
                         )
                     st.success(f"Saved resumable checkpoint to {saved}")
                 except (OSError, ValueError) as exc:
@@ -450,12 +455,26 @@ with tab_evaluate:
                 "run_config", "last_eval",
             ):
                 setattr(st.session_state, key, restored[key])
-            st.session_state.experiment_record = None
+            st.session_state.experiment_record = (
+                load_experiment_record(restored["experiment_record_id"])
+                if restored["experiment_record_id"] is not None else None
+            )
             if restored["resumable"]:
                 st.success(
-                    "Resumed checkpoint with complete experiment metadata at epoch {}."
+                    "Resumed checkpoint with complete training state at epoch {}."
                     .format(restored["current_epoch"])
                 )
+                if st.session_state.experiment_record is None:
+                    st.warning(
+                        "This checkpoint has no matching valid local experiment record. "
+                        "Training can resume, but continued epochs and evaluations will not "
+                        "be added to the original Compare runs history. Start a new run to "
+                        "create a separately tracked experiment."
+                    )
+                else:
+                    st.caption(
+                        "Reconnected experiment record " + st.session_state.experiment_record["run_id"]
+                    )
             elif not restored["class_names_verified"]:
                 st.warning(
                     "Loaded model weights for inference, but the checkpoint labels do not "
