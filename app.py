@@ -16,6 +16,7 @@ from neural_lab.checkpoints import can_save_resumable_checkpoint, restore_checkp
 from neural_lab.data import dataset_stats, evaluation_loader_config, make_loaders
 from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, update_early_stopping
+from neural_lab.labels import display_class_name
 
 st.set_page_config(page_title="Neural Lab", layout="wide")
 if platform.system() != "Darwin":
@@ -44,6 +45,8 @@ if "last_eval" not in st.session_state:
     st.session_state.last_eval = None
 if "class_names" not in st.session_state:
     st.session_state.class_names = CIFAR10_CLASSES
+if "class_names_verified" not in st.session_state:
+    st.session_state.class_names_verified = True
 if "model_dataset" not in st.session_state:
     st.session_state.model_dataset = None
 if "optimizer" not in st.session_state:
@@ -172,6 +175,7 @@ with tab_train:
             st.session_state.scheduler = scheduler
             st.session_state.early_stopping_state = {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}
             st.session_state.class_names = class_names
+            st.session_state.class_names_verified = True
             st.session_state.model_dataset = dataset_key
             st.session_state.run_config = {**config, "learning_rate": float(learning_rate)}
             st.session_state.current_epoch = 0
@@ -314,6 +318,8 @@ with tab_train:
 
 with tab_evaluate:
     st.subheader("Held-out evaluation")
+    if st.session_state.model is not None and not st.session_state.class_names_verified:
+        st.warning("Class-index mapping is unverified. Evaluation below uses output indices, not semantic class names.")
     st.write(f"Evaluation uses the held-out {st.session_state.model_dataset or dataset_key} test split and does not update model weights.")
     if st.session_state.model is None:
         st.info("Train a model or load a checkpoint before evaluating.")
@@ -352,8 +358,8 @@ with tab_evaluate:
                    xticks=range(len(st.session_state.class_names)), yticks=range(len(st.session_state.class_names)))
             tick_step = 1 if len(st.session_state.class_names) <= 20 else 5
             ticks = list(range(0, len(st.session_state.class_names), tick_step))
-            ax.set_xticks(ticks, labels=[st.session_state.class_names[i] for i in ticks], rotation=45, ha="right")
-            ax.set_yticks(ticks, labels=[st.session_state.class_names[i] for i in ticks])
+            ax.set_xticks(ticks, labels=[display_class_name(i, st.session_state.class_names, st.session_state.class_names_verified) for i in ticks], rotation=45, ha="right")
+            ax.set_yticks(ticks, labels=[display_class_name(i, st.session_state.class_names, st.session_state.class_names_verified) for i in ticks])
             fig.colorbar(image_plot, ax=ax, fraction=0.046, pad=0.04)
             threshold = matrix.max() / 2 if matrix.size else 0
             if matrix.shape[0] <= 20:
@@ -366,7 +372,7 @@ with tab_evaluate:
             plt.close(fig)
             class_rows = []
             for row in metrics["per_class"]:
-                class_rows.append({"Class": st.session_state.class_names[row["class_index"]],
+                class_rows.append({"Class": display_class_name(row["class_index"], st.session_state.class_names, st.session_state.class_names_verified),
                                    "Accuracy": row["accuracy"], "Support": row["support"]})
             st.subheader("Per-class accuracy")
             st.dataframe(class_rows, use_container_width=True, hide_index=True)
@@ -383,8 +389,8 @@ with tab_evaluate:
                     pixels = mistake["image"].permute(1, 2, 0).numpy()
                     pixels = np.clip(pixels * np.asarray(std) + np.asarray(mean), 0, 1)
                     axis.imshow(pixels)
-                    true_name = st.session_state.class_names[mistake["true_label"]]
-                    predicted_name = st.session_state.class_names[mistake["predicted_label"]]
+                    true_name = display_class_name(mistake["true_label"], st.session_state.class_names, st.session_state.class_names_verified)
+                    predicted_name = display_class_name(mistake["predicted_label"], st.session_state.class_names, st.session_state.class_names_verified)
                     axis.set_title("True: {}\nPred: {} ({:.0%})".format(true_name, predicted_name, mistake["confidence"]), fontsize=9)
                     axis.axis("off")
                 for axis in axes[len(mistakes):]:
@@ -402,7 +408,7 @@ with tab_evaluate:
             # Build and validate the complete replacement state before mutating session state.
             for key in (
                 "model", "optimizer", "scheduler", "early_stopping_state",
-                "class_names", "model_dataset", "current_epoch", "history",
+                "class_names", "class_names_verified", "model_dataset", "current_epoch", "history",
                 "run_config", "last_eval",
             ):
                 setattr(st.session_state, key, restored[key])
@@ -414,7 +420,7 @@ with tab_evaluate:
             elif not restored["class_names_verified"]:
                 st.warning(
                     "Loaded model weights for inference, but the checkpoint labels do not "
-                    "match a canonical CIFAR class set. Displayed class names are unverified."
+                    "match a canonical CIFAR class-index mapping. Evaluation and predictions use output indices instead of semantic labels."
                 )
             else:
                 st.warning(
@@ -427,6 +433,8 @@ with tab_evaluate:
 
 with tab_predict:
     st.subheader("Try an image")
+    if st.session_state.model is not None and not st.session_state.class_names_verified:
+        st.warning("Class-index mapping is unverified. Predictions are shown as output indices because their real-world class names are unknown.")
     st.write("Upload a picture to see which class the selected model considers most likely.")
     st.warning("This model only knows the selected dataset’s classes. A confident answer for an unrelated object can still be wrong.")
     uploaded_image = st.file_uploader("Choose an image", type=["png", "jpg", "jpeg", "webp"], key="image-upload")
@@ -452,9 +460,9 @@ with tab_predict:
                     probabilities = torch.softmax(model(tensor)[0], dim=0).cpu().numpy()
                 top_indices = np.argsort(probabilities)[::-1][:5]
                 best = int(top_indices[0])
-                st.metric("Top prediction", st.session_state.class_names[best], f"{probabilities[best]:.1%} model confidence")
-                st.bar_chart({st.session_state.class_names[int(i)]: float(probabilities[int(i)]) for i in top_indices})
-                st.dataframe([{"Class": st.session_state.class_names[int(i)], "Probability": float(probabilities[int(i)])} for i in top_indices],
+                st.metric("Top prediction", display_class_name(best, st.session_state.class_names, st.session_state.class_names_verified), f"{probabilities[best]:.1%} model confidence")
+                st.bar_chart({display_class_name(int(i), st.session_state.class_names, st.session_state.class_names_verified): float(probabilities[int(i)]) for i in top_indices})
+                st.dataframe([{"Class": display_class_name(int(i), st.session_state.class_names, st.session_state.class_names_verified), "Probability": float(probabilities[int(i)])} for i in top_indices],
                              use_container_width=True, hide_index=True)
         except (OSError, ValueError, Image.DecompressionBombError) as exc:
             st.error(f"Could not read that image: {exc}")
