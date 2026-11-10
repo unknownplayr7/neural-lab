@@ -165,7 +165,8 @@ with tab_train:
         }
         try:
             with st.spinner("Connecting to Hugging Face and preparing streaming data…"):
-                _train_loader, _validation_loader, _test_loader, class_names = get_loaders(**config)
+                loader_config = {key: value for key, value in config.items() if key != "architecture"}
+                _train_loader, _validation_loader, _test_loader, class_names = get_loaders(**loader_config)
             model = build_model(architecture_choice, num_classes=len(class_names)).to(device)
             optimizer = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=1e-4)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -473,7 +474,6 @@ with tab_about:
     st.info("Neural Lab is a macOS-only project. Apple Silicon uses MPS acceleration when available; Intel Macs use CPU. Windows and Linux are not supported.")
     st.markdown("""
 **Architecture:** choose the compact CNN baseline or a small residual CNN (ResNet-style) in the experiment sidebar. Both use batch normalization, ReLU, dropout, and adaptive pooling.
-adaptive average pooling, and a linear output layer sized to the selected dataset.
 
 **Loss:** cross-entropy. **Optimizer:** AdamW with weight decay.
 **Preprocessing:** RGB conversion, 32×32 resize, and dataset-specific channel normalization.
