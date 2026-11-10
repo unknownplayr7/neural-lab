@@ -8,6 +8,7 @@ import pytest
 from neural_lab.experiments import (
     comparison_rows,
     create_experiment_record,
+    load_experiment_record,
     load_experiment_records,
     save_experiment_record,
     update_experiment_record,
@@ -84,3 +85,18 @@ def test_record_rejects_non_json_safe_values():
     record["unsafe"] = float("nan")
     with pytest.raises(ValueError):
         save_experiment_record(record)
+
+
+def test_load_experiment_record_reconnects_only_matching_valid_record(tmp_path: Path):
+    record = create_experiment_record(CONFIG, architecture="CifarCNN", device="cpu")
+    save_experiment_record(record, tmp_path)
+
+    assert load_experiment_record(record["run_id"], tmp_path) == record
+    assert load_experiment_record("6e2f4c8a-53f1-4d31-8f5b-1a7c9e3d5b20", tmp_path) is None
+    assert load_experiment_record("../outside", tmp_path) is None
+
+
+def test_load_experiment_record_returns_none_for_corrupt_record(tmp_path: Path):
+    run_id = "6e2f4c8a-53f1-4d31-8f5b-1a7c9e3d5b20"
+    (tmp_path / (run_id + ".json")).write_text("{broken", encoding="utf-8")
+    assert load_experiment_record(run_id, tmp_path) is None
