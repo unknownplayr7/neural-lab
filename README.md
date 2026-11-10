@@ -13,6 +13,7 @@ This project intentionally targets macOS. It is not advertised as cross-platform
 - Upload an image and inspect the model's top class probabilities.
 - Save and resume checkpoints containing model weights, optimizer and scheduler state, early-stopping progress, metric history, and experiment settings.
 - Save versioned JSON experiment records with stable run IDs, UTC timestamps, dataset/split details, hyperparameters, device, software versions, and metrics; compare saved runs in the Compare runs tab.
+- Benchmark model-only inference on CPU and Apple MPS with separate warm-up/timed phases, and export results as JSON or CSV with methodology and hardware/software metadata.
 - Reduce the learning rate automatically when validation loss plateaus, and optionally stop training after a configurable patience window.
 
 **Scope:** this is an educational classifier, not a general-purpose object detector. It predicts only among the selected dataset's classes. An uploaded photo outside those classes may receive a confident but incorrect prediction.
@@ -107,6 +108,10 @@ neural_lab/training.py    Reusable training and evaluation loops
 tests/                    Automated tests
 .github/workflows/ci.yml  Continuous integration
 ```
+
+## Inference benchmarking
+
+The Benchmark tab measures model-only inference using random 32×32 inputs. Warm-up batches are excluded from the timed phase, and MPS is synchronized around timing so queued accelerator work is included. Results report batch latency and images per second alongside device, architecture, dataset label, batch size, warm-up count, timed iterations, platform, Python/PyTorch versions, and methodology. Export results as JSON or CSV. This is not a training benchmark: it excludes data loading, preprocessing, and backpropagation. CPU and MPS results are hardware-, software-, model-, and workload-dependent; compare runs only when their settings match.
 
 ## Experiment records
 
