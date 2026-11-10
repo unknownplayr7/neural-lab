@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, BinaryIO
+from uuid import UUID
 
 import torch
 from torch import nn
@@ -206,6 +207,7 @@ def save_checkpoint(
     run_config: dict[str, Any] | None = None,
     scheduler: Any | None = None,
     early_stopping_state: dict[str, Any] | None = None,
+    experiment_record_id: str | None = None,
 ) -> None:
     """Serialize a checkpoint to an already-open binary file.
 
@@ -224,6 +226,8 @@ def save_checkpoint(
         "scheduler_state_dict": _cpu_tree(scheduler.state_dict()) if scheduler is not None else None,
         "early_stopping_state": dict(early_stopping_state or {}),
     }
+    if experiment_record_id is not None:
+        payload["experiment_record_id"] = experiment_record_id
     torch.save(payload, checkpoint_file)
 
 
@@ -236,6 +240,14 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
         raise ValueError("Unsupported checkpoint format_version; expected 1")
     if payload.get("architecture", "CifarCNN") not in {"CifarCNN", "CifarResNet"}:
         raise ValueError("Unsupported checkpoint architecture")
+    experiment_record_id = payload.get("experiment_record_id")
+    if experiment_record_id is not None:
+        try:
+            parsed_experiment_id = UUID(experiment_record_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError("Checkpoint experiment_record_id must be a UUID") from exc
+        if str(parsed_experiment_id) != experiment_record_id:
+            raise ValueError("Checkpoint experiment_record_id must use canonical UUID format")
     state = payload.get("model_state_dict")
     if not isinstance(state, dict) or not state:
         raise ValueError("Checkpoint model_state_dict must be a non-empty mapping")
