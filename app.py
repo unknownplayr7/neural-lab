@@ -17,6 +17,7 @@ from neural_lab.data import dataset_stats, evaluation_loader_config, make_loader
 from neural_lab.model import CIFAR10_CLASSES, build_model, available_device, save_checkpoint
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, update_early_stopping
 from neural_lab.labels import display_class_name
+from neural_lab.benchmark import benchmark_to_csv, benchmark_to_json, run_inference_benchmark
 from neural_lab.experiments import (
     comparison_rows,
     create_experiment_record,
@@ -68,6 +69,8 @@ if "early_stopping_state" not in st.session_state:
     st.session_state.early_stopping_state = {"best_loss": float("inf"), "bad_epochs": 0, "stopped": False}
 if "experiment_record" not in st.session_state:
     st.session_state.experiment_record = None
+if "benchmark_results" not in st.session_state:
+    st.session_state.benchmark_results = []
 
 
 def device_options() -> list[str]:
@@ -151,7 +154,7 @@ except RuntimeError as exc:
     st.error(str(exc))
     st.stop()
 
-tab_train, tab_evaluate, tab_predict, tab_compare, tab_about = st.tabs(["Train", "Evaluate", "Predict", "Compare runs", "Model & notes"])
+tab_train, tab_evaluate, tab_predict, tab_compare, tab_benchmark, tab_about = st.tabs(["Train", "Evaluate", "Predict", "Compare runs", "Benchmark", "Model & notes"])
 
 with tab_train:
     st.subheader("Train a convolutional neural network")
@@ -531,6 +534,87 @@ with tab_compare:
             "run_config": selected_record["run_config"],
             "software": selected_record["software"],
         })
+
+with tab_benchmark:
+    st.subheader("CPU vs Apple Silicon inference benchmark")
+    st.write(
+        "Measure model-only inference throughput on CPU and, when available, Apple MPS. "
+        "The benchmark copies the active model, so it does not move or modify your training model."
+    )
+    st.warning(
+        "This measures inference on random 32×32 inputs, not training speed or end-to-end "
+        "dataset throughput. Results depend on the Mac, PyTorch build, model, batch size, "
+        "and benchmark settings. Compare only runs with matching workloads."
+    )
+    benchmark_options = ["cpu"] + (["mps"] if "mps" in device_options() else [])
+    benchmark_devices = st.multiselect(
+        "Devices to benchmark",
+        options=benchmark_options,
+        default=["cpu"],
+        format_func=lambda value: "Apple MPS" if value == "mps" else "CPU",
+    )
+    benchmark_batch_size = st.select_slider(
+        "Benchmark batch size", options=[1, 8, 16, 32, 64, 128, 256], value=64
+    )
+    benchmark_warmups = st.slider("Warm-up batches", min_value=0, max_value=20, value=3)
+    benchmark_iterations = st.slider("Timed batches", min_value=1, max_value=100, value=20)
+    if st.button("Run benchmark", type="primary", disabled=not benchmark_devices):
+        try:
+            if st.session_state.model is not None:
+                benchmark_model = st.session_state.model
+            else:
+                benchmark_classes = 100 if dataset_key == "cifar100" else 10
+                benchmark_model = build_model(architecture_choice, num_classes=benchmark_classes)
+                st.info("No trained model is loaded. This run benchmarks a randomly initialized model.")
+            results = []
+            with st.spinner("Running warm-up and timed inference passes…"):
+                for target_device in benchmark_devices:
+                    results.append(
+                        run_inference_benchmark(
+                            benchmark_model,
+                            device=target_device,
+                            dataset_name=st.session_state.model_dataset or dataset_key,
+                            batch_size=int(benchmark_batch_size),
+                            warmup_batches=int(benchmark_warmups),
+                            iterations=int(benchmark_iterations),
+                        )
+                    )
+            st.session_state.benchmark_results = results
+            st.success("Benchmark completed.")
+        except (RuntimeError, ValueError) as exc:
+            st.error(f"Benchmark failed: {exc}")
+    if st.session_state.benchmark_results:
+        st.dataframe(
+            [
+                {
+                    "Device": row["device_label"],
+                    "Architecture": row["architecture"],
+                    "Dataset": row["dataset"].upper(),
+                    "Batch size": row["batch_size"],
+                    "Warm-up batches": row["warmup_batches"],
+                    "Timed batches": row["iterations"],
+                    "Latency (ms/batch)": row["latency_ms_per_batch"],
+                    "Throughput (images/s)": row["images_per_second"],
+                }
+                for row in st.session_state.benchmark_results
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.download_button(
+            "Export benchmark JSON",
+            data=benchmark_to_json(st.session_state.benchmark_results),
+            file_name="neural-lab-benchmark.json",
+            mime="application/json",
+        )
+        st.download_button(
+            "Export benchmark CSV",
+            data=benchmark_to_csv(st.session_state.benchmark_results),
+            file_name="neural-lab-benchmark.csv",
+            mime="text/csv",
+        )
+        with st.expander("Benchmark methodology"):
+            st.write(st.session_state.benchmark_results[0]["methodology"])
 
 with tab_about:
     st.subheader("What is being trained?")
