@@ -13,7 +13,6 @@ This project intentionally targets macOS. It is not advertised as cross-platform
 - Upload an image and inspect the model's top class probabilities.
 - Save and resume checkpoints containing model weights, optimizer and scheduler state, early-stopping progress, metric history, and experiment settings.
 - Save versioned JSON experiment records with stable run IDs, UTC timestamps, dataset/split details, hyperparameters, device, software versions, and metrics; compare saved runs in the Compare runs tab.
-- Save versioned JSON experiment records with stable run IDs, UTC timestamps, dataset/split details, hyperparameters, device, software versions, and metrics; compare saved runs in the Compare runs tab.
 - Reduce the learning rate automatically when validation loss plateaus, and optionally stop training after a configurable patience window.
 
 **Scope:** this is an educational classifier, not a general-purpose object detector. It predicts only among the selected dataset's classes. An uploaded photo outside those classes may receive a confident but incorrect prediction.
@@ -108,10 +107,6 @@ neural_lab/training.py    Reusable training and evaluation loops
 tests/                    Automated tests
 .github/workflows/ci.yml  Continuous integration
 ```
-
-## Experiment records
-
-Each newly initialized run receives a UUID and a UTC creation timestamp. Neural Lab stores a JSON record under `experiments/<run-id>.json` and updates it after each completed epoch and held-out evaluation. Records include the Hugging Face dataset source, the seeded train/validation split strategy, sample limits, seed, augmentation, architecture, device, Python/PyTorch/platform versions, and available metrics. The Compare runs tab reads these records and skips malformed or unsupported versions. Records are local to the working directory; back them up if you need to preserve them. Older checkpoints remain loadable, but checkpoints created before experiment records existed cannot be retroactively assigned complete run metadata.
 
 ## Experiment records
 
