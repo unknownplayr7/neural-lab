@@ -229,7 +229,7 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
         canonical_classes = CIFAR10_CLASSES if config["dataset_name"] == "cifar10" else CIFAR100_CLASSES
         if tuple(normalized_classes) != tuple(name.casefold() for name in canonical_classes):
             raise ValueError(
-                "Checkpoint class_names must match the exact canonical CIFAR class-index order"
+                "Checkpoint class_names must match the canonical CIFAR class set in exact class-index order"
             )
     for key in ("batch_size", "train_limit", "validation_limit", "test_limit"):
         if key in config and config[key] < 1:
