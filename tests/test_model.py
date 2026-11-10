@@ -5,7 +5,7 @@ import torch
 
 from neural_lab.model import (
     CIFAR10_CLASSES, CIFAR100_CLASSES, CifarCNN, available_device, load_checkpoint,
-    save_checkpoint,
+    checkpoint_class_names_verified, checkpoint_is_resumable, save_checkpoint,
 )
 
 
@@ -218,23 +218,35 @@ def test_checkpoint_rejects_missing_canonical_class_name(tmp_path: Path):
         load_checkpoint(path, CifarCNN())
 
 
-def test_checkpoint_accepts_non_default_canonical_class_order(tmp_path: Path):
+def test_checkpoint_rejects_reordered_cifar10_class_indices(tmp_path: Path):
     reversed_classes = tuple(reversed(CIFAR10_CLASSES))
     path = _save_checkpoint(
-        tmp_path / "reordered.pt", CifarCNN(), epoch=0, class_names=reversed_classes
+        tmp_path / "reordered.pt", CifarCNN(), epoch=0,
+        class_names=reversed_classes, run_config={"dataset_name": "cifar10"},
+    )
+    with pytest.raises(ValueError, match="exact canonical CIFAR class-index order"):
+        load_checkpoint(path, CifarCNN())
+
+
+def test_legacy_reordered_cifar10_labels_are_unverified_and_not_resumable(tmp_path: Path):
+    reversed_classes = tuple(reversed(CIFAR10_CLASSES))
+    path = _save_checkpoint(
+        tmp_path / "legacy-reordered.pt", CifarCNN(), epoch=0,
+        class_names=reversed_classes,
     )
     payload = load_checkpoint(path, CifarCNN())
-    assert tuple(payload["class_names"]) == reversed_classes
+    assert checkpoint_class_names_verified(payload) is False
+    assert checkpoint_is_resumable(payload) is False
 
 
-def test_cifar100_checkpoint_accepts_canonical_class_order(tmp_path: Path):
+def test_checkpoint_rejects_reordered_cifar100_class_indices(tmp_path: Path):
     classes = tuple(reversed(CIFAR100_CLASSES))
     path = _save_checkpoint(
         tmp_path / "cifar100.pt", CifarCNN(num_classes=100), epoch=0,
         class_names=classes, run_config={"dataset_name": "cifar100"},
     )
-    payload = load_checkpoint(path, CifarCNN(num_classes=100))
-    assert tuple(payload["class_names"]) == classes
+    with pytest.raises(ValueError, match="exact canonical CIFAR class-index order"):
+        load_checkpoint(path, CifarCNN(num_classes=100))
 
 
 def test_legacy_custom_class_names_are_marked_unverified_for_inference(tmp_path: Path):

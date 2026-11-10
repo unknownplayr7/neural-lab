@@ -12,7 +12,7 @@ import torch
 from PIL import Image, ImageOps
 from torch import nn
 
-from neural_lab.checkpoints import restore_checkpoint
+from neural_lab.checkpoints import can_save_resumable_checkpoint, restore_checkpoint
 from neural_lab.data import dataset_stats, evaluation_loader_config, make_loaders
 from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, update_early_stopping
@@ -277,31 +277,40 @@ with tab_train:
     show_history(st.session_state.history)
     if st.session_state.model is not None:
         st.divider()
-        st.subheader("Save a resumable checkpoint")
-        checkpoint_name = st.text_input("Checkpoint filename", value="cifar-model.pt", help="Saved inside the local checkpoints folder.")
-        if st.button("Save checkpoint", key="save-checkpoint"):
-            try:
-                latest = st.session_state.history[-1] if st.session_state.history else {}
-                if Path(checkpoint_name).name != checkpoint_name or Path(checkpoint_name).suffix.lower() not in {".pt", ".pth"}:
-                    raise ValueError("Enter a filename ending in .pt or .pth, without folders.")
-                checkpoint_dir = Path("checkpoints")
-                checkpoint_dir.mkdir(parents=True, exist_ok=True)
-                saved = checkpoint_dir / checkpoint_name
-                with saved.open("wb") as checkpoint_file:
-                    save_checkpoint(
-                        checkpoint_file, st.session_state.model,
-                        epoch=int(st.session_state.current_epoch),
-                        accuracy=latest.get("val_accuracy"),
-                        class_names=tuple(st.session_state.class_names),
-                        optimizer=st.session_state.optimizer,
-                        history=st.session_state.history,
-                        run_config=st.session_state.run_config,
-                        scheduler=st.session_state.scheduler,
-                        early_stopping_state=st.session_state.early_stopping_state,
-                    )
-                st.success(f"Saved resumable checkpoint to {saved}")
-            except (OSError, ValueError) as exc:
-                st.error(f"Could not save checkpoint: {exc}")
+        if can_save_resumable_checkpoint(
+            st.session_state.optimizer,
+            st.session_state.run_config,
+            st.session_state.class_names,
+        ):
+            st.subheader("Save a resumable checkpoint")
+            if st.button("Save checkpoint", key="save-checkpoint"):
+                try:
+                    latest = st.session_state.history[-1] if st.session_state.history else {}
+                    checkpoint_dir = Path("checkpoints")
+                    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+                    saved = checkpoint_dir / "cifar-model.pt"
+                    with saved.open("wb") as checkpoint_file:
+                        save_checkpoint(
+                            checkpoint_file, st.session_state.model,
+                            epoch=int(st.session_state.current_epoch),
+                            accuracy=latest.get("val_accuracy"),
+                            class_names=tuple(st.session_state.class_names),
+                            optimizer=st.session_state.optimizer,
+                            history=st.session_state.history,
+                            run_config=st.session_state.run_config,
+                            scheduler=st.session_state.scheduler,
+                            early_stopping_state=st.session_state.early_stopping_state,
+                        )
+                    st.success(f"Saved resumable checkpoint to {saved}")
+                except (OSError, ValueError) as exc:
+                    st.error(f"Could not save checkpoint: {exc}")
+        else:
+            st.subheader("Checkpoint export unavailable")
+            st.info(
+                "This model is inference-only or has unverified class-index metadata. "
+                "It cannot be saved as a resumable checkpoint. Start a new training run "
+                "or load a fully verified resumable checkpoint."
+            )
 
 with tab_evaluate:
     st.subheader("Held-out evaluation")

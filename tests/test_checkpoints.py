@@ -5,7 +5,7 @@ import io
 import pytest
 import torch
 
-from neural_lab.checkpoints import restore_checkpoint
+from neural_lab.checkpoints import can_save_resumable_checkpoint, restore_checkpoint
 from neural_lab.model import CifarCNN, save_checkpoint
 
 COMPLETE_CONFIG = {
@@ -57,6 +57,9 @@ def test_restore_resumable_checkpoint_restores_model_optimizer_and_progress():
     assert restored["optimizer"] is not None
     assert restored["scheduler"] is None
     assert restored["run_config"] == COMPLETE_CONFIG
+    assert can_save_resumable_checkpoint(
+        restored["optimizer"], restored["run_config"], restored["class_names"]
+    ) is True
     assert all(parameter.device.type == "cpu" for parameter in restored["model"].parameters())
 
 
@@ -83,6 +86,9 @@ def test_restore_incomplete_checkpoint_enters_inference_only_mode():
     assert restored["history"] == []
     assert restored["run_config"] is None
     assert restored["class_names_verified"] is True
+    assert can_save_resumable_checkpoint(
+        restored["optimizer"], restored["run_config"], restored["class_names"]
+    ) is False
 
 
 def test_restore_rejects_invalid_metadata_before_returning_replacement_state():

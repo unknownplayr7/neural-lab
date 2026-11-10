@@ -9,11 +9,30 @@ import torch
 
 from neural_lab.model import (
     CifarCNN,
+    RESUMABLE_CONFIG_FIELDS,
     checkpoint_class_names_verified,
     checkpoint_is_resumable,
     checkpoint_resume_progress,
     validate_checkpoint_payload,
 )
+
+def can_save_resumable_checkpoint(
+    optimizer: Any,
+    run_config: Any,
+    class_names: Any,
+) -> bool:
+    """Whether the current app state can truthfully be saved as resumable."""
+    if optimizer is None or not isinstance(run_config, dict):
+        return False
+    if not RESUMABLE_CONFIG_FIELDS.issubset(run_config):
+        return False
+    payload = {
+        "class_names": class_names,
+        "run_config": run_config,
+        "optimizer_state_dict": {},
+    }
+    return checkpoint_class_names_verified(payload)
+
 
 MAX_CHECKPOINT_BYTES = 25 * 1024 * 1024
 DEFAULT_EARLY_STOPPING_STATE = {
