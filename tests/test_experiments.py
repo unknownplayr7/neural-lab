@@ -100,3 +100,39 @@ def test_load_experiment_record_returns_none_for_corrupt_record(tmp_path: Path):
     run_id = "6e2f4c8a-53f1-4d31-8f5b-1a7c9e3d5b20"
     (tmp_path / (run_id + ".json")).write_text("{broken", encoding="utf-8")
     assert load_experiment_record(run_id, tmp_path) is None
+
+
+@pytest.mark.parametrize(
+    "history",
+    [
+        ["not a metric record"],
+        [{"epoch": 1.0, "val_loss": 1.2}],
+        [{"epoch": 1.0, "val_loss": 1.2, "val_accuracy": "0.8"}],
+        [{"epoch": True, "val_loss": 1.2, "val_accuracy": 0.8}],
+        [{"epoch": 1.0, "val_loss": float("nan"), "val_accuracy": 0.8}],
+        [{"epoch": 1.0, "val_loss": -0.1, "val_accuracy": 0.8}],
+        [{"epoch": 1.0, "val_loss": 1.2, "val_accuracy": 1.1}],
+    ],
+)
+def test_experiment_history_validation_rejects_malformed_rows(tmp_path: Path, history):
+    record = create_experiment_record(CONFIG, architecture="CifarCNN", device="cpu")
+    record["history"] = history
+    path = tmp_path / (record["run_id"] + ".json")
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    with pytest.warns(RuntimeWarning, match="Skipping invalid experiment record"):
+        assert load_experiment_records(tmp_path) == []
+    assert load_experiment_record(record["run_id"], tmp_path) is None
+
+
+def test_experiment_history_validation_keeps_comparison_compatible_records(tmp_path: Path):
+    record = create_experiment_record(CONFIG, architecture="CifarCNN", device="cpu")
+    record["history"] = [
+        {"epoch": 1.0, "train_loss": 1.5, "val_loss": 1.4, "val_accuracy": 0.55},
+        {"epoch": 2.0, "train_loss": 1.0, "val_loss": 1.1, "val_accuracy": 0.7},
+    ]
+    save_experiment_record(record, tmp_path)
+
+    loaded = load_experiment_records(tmp_path)
+    assert len(loaded) == 1
+    assert comparison_rows(loaded)[0]["Best validation accuracy"] == 0.7
