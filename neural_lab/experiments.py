@@ -129,6 +129,32 @@ def save_experiment_record(
     return target
 
 
+def load_experiment_record(
+    run_id: str,
+    directory: str | Path = "experiments",
+) -> dict[str, Any] | None:
+    """Load one matching record safely; return None when missing or invalid."""
+    try:
+        parsed_id = UUID(run_id)
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if str(parsed_id) != run_id:
+        return None
+    target_dir = Path(directory)
+    target = target_dir / (run_id + ".json")
+    if target.is_symlink() or not target.is_file():
+        return None
+    try:
+        with target.open("r", encoding="utf-8") as handle:
+            record = json.load(handle)
+        _validate_record(record)
+        if record["run_id"] != run_id:
+            return None
+        return record
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
 def load_experiment_records(directory: str | Path = "experiments") -> list[dict[str, Any]]:
     """Load valid versioned JSON records, skipping malformed or unsupported files."""
     target_dir = Path(directory)
