@@ -14,7 +14,7 @@ from torch import nn
 
 from neural_lab.checkpoints import can_save_resumable_checkpoint, restore_checkpoint
 from neural_lab.data import dataset_stats, evaluation_loader_config, make_loaders
-from neural_lab.model import CIFAR10_CLASSES, CifarCNN, available_device, save_checkpoint
+from neural_lab.model import CIFAR10_CLASSES, build_model, available_device, save_checkpoint
 from neural_lab.training import evaluate_classifier, run_epoch, seed_everything, update_early_stopping
 from neural_lab.labels import display_class_name
 
@@ -119,6 +119,7 @@ with st.sidebar:
     dataset_choice = st.selectbox("Dataset", ["CIFAR-10", "CIFAR-100"], index=0)
     dataset_key = "cifar100" if dataset_choice == "CIFAR-100" else "cifar10"
     device_choice = st.selectbox("Compute device", device_options(), index=0, help="Auto prefers Apple Silicon MPS, then CPU.")
+    architecture_choice = st.selectbox("Model architecture", ["CifarCNN", "CifarResNet"], format_func=lambda value: "Compact CNN" if value == "CifarCNN" else "Residual CNN")
     epochs = st.slider("Epochs", min_value=1, max_value=30, value=5)
     batch_size = st.select_slider("Batch size", options=[16, 32, 64, 128, 256], value=64)
     learning_rate = st.select_slider("Learning rate", options=[0.0001, 0.0003, 0.001, 0.003, 0.01], value=0.001, format_func=lambda x: f"{x:g}")
@@ -155,7 +156,7 @@ with tab_train:
     if st.button("Start / reset run", type="primary", use_container_width=True, key="start-run"):
         seed_everything(int(seed))
         config = {
-            "dataset_name": dataset_key, "batch_size": int(batch_size),
+            "dataset_name": dataset_key, "architecture": architecture_choice, "batch_size": int(batch_size),
             "train_limit": int(train_limit), "validation_limit": int(validation_limit),
             "test_limit": int(test_limit), "augment": bool(augment), "seed": int(seed),
             "scheduler_enabled": bool(scheduler_enabled), "scheduler_patience": int(scheduler_patience),
@@ -164,8 +165,9 @@ with tab_train:
         }
         try:
             with st.spinner("Connecting to Hugging Face and preparing streaming data…"):
-                _train_loader, _validation_loader, _test_loader, class_names = get_loaders(**config)
-            model = CifarCNN(num_classes=len(class_names)).to(device)
+                loader_config = {key: value for key, value in config.items() if key != "architecture"}
+                _train_loader, _validation_loader, _test_loader, class_names = get_loaders(**loader_config)
+            model = build_model(architecture_choice, num_classes=len(class_names)).to(device)
             optimizer = torch.optim.AdamW(model.parameters(), lr=float(learning_rate), weight_decay=1e-4)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer, mode="min", factor=float(scheduler_factor), patience=int(scheduler_patience)
@@ -471,8 +473,7 @@ with tab_about:
     st.subheader("What is being trained?")
     st.info("Neural Lab is a macOS-only project. Apple Silicon uses MPS acceleration when available; Intel Macs use CPU. Windows and Linux are not supported.")
     st.markdown("""
-**Architecture:** convolution, batch normalization, ReLU blocks, max-pooling, dropout,
-adaptive average pooling, and a linear output layer sized to the selected dataset.
+**Architecture:** choose the compact CNN baseline or a small residual CNN (ResNet-style) in the experiment sidebar. Both use batch normalization, ReLU, dropout, and adaptive pooling.
 
 **Loss:** cross-entropy. **Optimizer:** AdamW with weight decay.
 **Preprocessing:** RGB conversion, 32×32 resize, and dataset-specific channel normalization.

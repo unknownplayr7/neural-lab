@@ -9,6 +9,7 @@ import torch
 
 from neural_lab.model import (
     CifarCNN,
+    build_model,
     RESUMABLE_CONFIG_FIELDS,
     checkpoint_class_names_verified,
     checkpoint_is_resumable,
@@ -59,7 +60,8 @@ def restore_checkpoint(
     validate_checkpoint_payload(payload)
 
     class_names = tuple(payload["class_names"])
-    model = CifarCNN(num_classes=len(class_names))
+    architecture = payload.get("architecture", "CifarCNN")
+    model = build_model(architecture, num_classes=len(class_names))
     model.load_state_dict(payload["model_state_dict"], strict=True)
     model = model.to(device)
 

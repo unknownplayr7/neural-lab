@@ -54,6 +54,8 @@ class CifarCNN(nn.Module):
         if not 0.0 <= dropout < 1.0:
             raise ValueError("dropout must be in [0, 1)")
 
+        self.architecture_name = "CifarCNN"
+        self.num_classes = num_classes
         self.features = nn.Sequential(
             nn.Conv2d(3, 32, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(32),
@@ -88,6 +90,75 @@ class CifarCNN(nn.Module):
         if images.shape[1] != 3:
             raise ValueError(f"Expected 3 RGB channels, got {images.shape[1]}")
         return self.classifier(self.features(images))
+
+
+
+class ResidualBlock(nn.Module):
+    """Two-convolution residual block for small RGB images."""
+
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.shortcut = (
+            nn.Identity()
+            if stride == 1 and in_channels == out_channels
+            else nn.Sequential(
+                nn.Conv2d(in_channels, out_channels, 1, stride=stride, bias=False),
+                nn.BatchNorm2d(out_channels),
+            )
+        )
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        residual = self.shortcut(inputs)
+        outputs = self.relu(self.bn1(self.conv1(inputs)))
+        outputs = self.bn2(self.conv2(outputs))
+        return self.relu(outputs + residual)
+
+
+class CifarResNet(nn.Module):
+    """Compact residual network designed for 32x32 CIFAR images."""
+
+    def __init__(self, num_classes: int = 10, dropout: float = 0.25) -> None:
+        super().__init__()
+        if num_classes < 2:
+            raise ValueError("num_classes must be at least 2")
+        if not 0.0 <= dropout < 1.0:
+            raise ValueError("dropout must be in [0, 1)")
+        self.architecture_name = "CifarResNet"
+        self.num_classes = num_classes
+        self.stem = nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+        )
+        self.layer1 = nn.Sequential(ResidualBlock(32, 32), ResidualBlock(32, 32))
+        self.layer2 = nn.Sequential(ResidualBlock(32, 64, stride=2), ResidualBlock(64, 64))
+        self.layer3 = nn.Sequential(ResidualBlock(64, 128, stride=2), ResidualBlock(128, 128))
+        self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.classifier = nn.Sequential(nn.Flatten(), nn.Dropout(dropout), nn.Linear(128, num_classes))
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        if images.ndim != 4:
+            raise ValueError(f"Expected NCHW image batch, got shape {tuple(images.shape)}")
+        if images.shape[1] != 3:
+            raise ValueError(f"Expected 3 RGB channels, got {images.shape[1]}")
+        outputs = self.stem(images)
+        outputs = self.layer1(outputs)
+        outputs = self.layer2(outputs)
+        outputs = self.layer3(outputs)
+        return self.classifier(self.pool(outputs))
+
+
+def build_model(architecture: str, num_classes: int) -> nn.Module:
+    """Construct a supported architecture without accepting arbitrary class names."""
+    constructors = {"CifarCNN": CifarCNN, "CifarResNet": CifarResNet}
+    if architecture not in constructors:
+        raise ValueError(f"Unsupported checkpoint architecture: {architecture!r}")
+    return constructors[architecture](num_classes=num_classes)
 
 
 def available_device(preference: str = "auto") -> torch.device:
@@ -146,7 +217,7 @@ def save_checkpoint(
         "epoch": int(epoch),
         "class_names": list(class_names),
         "accuracy": accuracy,
-        "architecture": "CifarCNN",
+        "architecture": getattr(model, "architecture_name", "CifarCNN"),
         "history": history or [],
         "run_config": run_config or {},
         "optimizer_state_dict": _cpu_tree(optimizer.state_dict()) if optimizer is not None else None,
@@ -163,7 +234,7 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
     version = payload.get("format_version")
     if isinstance(version, bool) or not isinstance(version, int) or version != 1:
         raise ValueError("Unsupported checkpoint format_version; expected 1")
-    if payload.get("architecture") != "CifarCNN":
+    if payload.get("architecture", "CifarCNN") not in {"CifarCNN", "CifarResNet"}:
         raise ValueError("Unsupported checkpoint architecture")
     state = payload.get("model_state_dict")
     if not isinstance(state, dict) or not state:
@@ -207,7 +278,7 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("Checkpoint run_config must be a mapping")
     expected_types = {
-        "dataset_name": str, "batch_size": int, "train_limit": int,
+        "dataset_name": str, "architecture": str, "batch_size": int, "train_limit": int,
         "validation_limit": int, "test_limit": int, "augment": bool,
         "seed": int, "learning_rate": (int, float),
         "scheduler_enabled": bool, "scheduler_patience": int,
@@ -220,6 +291,10 @@ def validate_checkpoint_payload(payload: Any) -> dict[str, Any]:
             raise ValueError(f"Checkpoint run_config contains unknown field {key!r}")
         if (isinstance(value, bool) and expected is not bool) or not isinstance(value, expected):
             raise ValueError(f"Checkpoint run_config field {key!r} has an invalid type")
+    if config.get("architecture", payload.get("architecture", "CifarCNN")) not in {"CifarCNN", "CifarResNet"}:
+        raise ValueError("Checkpoint run_config architecture is unsupported")
+    if config.get("architecture", payload.get("architecture", "CifarCNN")) != payload.get("architecture", "CifarCNN"):
+        raise ValueError("Checkpoint architecture metadata does not match run_config")
     if config.get("dataset_name", "cifar10") not in {"cifar10", "cifar100"}:
         raise ValueError("Checkpoint run_config dataset_name is unsupported")
     if "dataset_name" in config:
@@ -318,7 +393,7 @@ def load_checkpoint(path: str | Path, model: CifarCNN, map_location: str | torch
     """Load and validate a checkpoint using weights-only deserialization."""
     payload = torch.load(path, map_location=map_location, weights_only=True)
     validate_checkpoint_payload(payload)
-    if len(payload["class_names"]) != model.classifier[-1].out_features:
+    if len(payload["class_names"]) != model.num_classes:
         raise ValueError("Checkpoint class count does not match the model")
     model.load_state_dict(payload["model_state_dict"], strict=True)
     return payload
