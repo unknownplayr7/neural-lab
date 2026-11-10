@@ -25,7 +25,7 @@ COMPLETE_CONFIG = {
 }
 
 
-def _checkpoint_bytes(*, config=None, with_optimizer=True, with_scheduler=False):
+def _checkpoint_bytes(*, config=None, with_optimizer=True, with_scheduler=False, experiment_record_id=None):
     model = CifarCNN()
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3) if with_optimizer else None
     scheduler = (
@@ -44,12 +44,16 @@ def _checkpoint_bytes(*, config=None, with_optimizer=True, with_scheduler=False)
         scheduler=scheduler,
         history=[{"epoch": 1.0}, {"epoch": 2.0}, {"epoch": 3.0}, {"epoch": 4.0}],
         run_config=config,
+        experiment_record_id=experiment_record_id,
     )
     return buffer.getvalue()
 
 
 def test_restore_resumable_checkpoint_restores_model_optimizer_and_progress():
-    restored = restore_checkpoint(_checkpoint_bytes(config=COMPLETE_CONFIG), device="cpu")
+    run_id = "6e2f4c8a-53f1-4d31-8f5b-1a7c9e3d5b20"
+    restored = restore_checkpoint(
+        _checkpoint_bytes(config=COMPLETE_CONFIG, experiment_record_id=run_id), device="cpu"
+    )
 
     assert restored["resumable"] is True
     assert restored["current_epoch"] == 4
@@ -57,6 +61,7 @@ def test_restore_resumable_checkpoint_restores_model_optimizer_and_progress():
     assert restored["optimizer"] is not None
     assert restored["scheduler"] is None
     assert restored["run_config"] == COMPLETE_CONFIG
+    assert restored["experiment_record_id"] == run_id
     assert can_save_resumable_checkpoint(
         restored["optimizer"], restored["run_config"], restored["class_names"]
     ) is True
@@ -123,3 +128,16 @@ def test_restore_marks_legacy_custom_labels_as_unverified_inference_only():
     assert restored["class_names_verified"] is False
     assert restored["resumable"] is False
     assert restored["optimizer"] is None
+
+
+def test_restore_legacy_checkpoint_without_experiment_id_remains_supported():
+    restored = restore_checkpoint(_checkpoint_bytes(config=COMPLETE_CONFIG), device="cpu")
+    assert restored["resumable"] is True
+    assert restored["experiment_record_id"] is None
+
+
+def test_restore_rejects_malformed_experiment_record_id():
+    with pytest.raises(ValueError, match="experiment_record_id"):
+        restore_checkpoint(
+            _checkpoint_bytes(config=COMPLETE_CONFIG, experiment_record_id="../outside.json")
+        )
