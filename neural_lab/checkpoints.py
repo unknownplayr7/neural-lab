@@ -112,4 +112,5 @@ def restore_checkpoint(
         "last_eval": None,
         "resumable": resumable,
         "class_names_verified": class_names_verified,
+        "experiment_record_id": payload.get("experiment_record_id"),
     }
